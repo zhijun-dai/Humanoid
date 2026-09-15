@@ -24,6 +24,13 @@
 
 ## Jetson 安装
 
+**板子准备**（在测任何性能数据之前，默认跑低功耗档会测出偏低的帧率）：
+```bash
+sudo nvpmodel -p --verbose && sudo nvpmodel -m 0 && sudo jetson_clocks
+sudo apt install -y v4l-utils
+sudo usermod -aG dialout $USER    # 串口免 sudo，重新登录生效
+```
+
 **JetPack 7.2**（Ubuntu 24.04 + Python 3.12 + CUDA 13.2；NVIDIA jp wheelhouse
 是 py3.10 的用不了，走上游 cu132 wheel）：
 ```bash
@@ -32,8 +39,17 @@ pip install "numpy<=1.26.4"   # torch cu132 与 numpy 2.x 冲突
 pip install torch==2.12.0+cu132 --index-url https://download.pytorch.org/whl/cu132
 pip install pyserial
 python probe.py               # OpenCV 探测（预装版是否带 CUDA）
-# 不带 → 用 JetPack 预装 opencv 或 4.8.x 带 CUDA wheel（pip opencv-python 5.0 有坑）
 ```
+
+JP7.2 预装的 OpenCV 4.8.0 和 apt 的 `python3-opencv` **都不带 CUDA**，
+`cv2.cuda` 实际走 CPU 回退。想要真 GPU 加速只能源码编译，且 CUDA 13.2 上
+OpenCV 4.10/4.13 的 cudev 模块编不过（libcu++ tuple 不兼容，需手改
+`cudev/common.hpp` + `cudev/ptr2d/zip.hpp`）。编译时装进 venv 即可
+（`-D OPENCV_PYTHON3_INSTALL_PATH=~/robocup-venv/lib/python3.12/site-packages`），
+**不需要删系统 OpenCV**——venv 本来就不看 `/usr/lib/python3/dist-packages`。
+
+先按 `probe.py` + `run_robot.py --headless` 打印的 `fps=` 判断是否值得编：
+控制环只有 10Hz，全链 ≥15 FPS 就不用折腾。
 
 JetPack 6.x 旧路线见 requirements-gpu.txt 注释。
 

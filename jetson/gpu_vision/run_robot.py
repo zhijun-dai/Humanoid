@@ -203,6 +203,9 @@ def main():
     last_frame_t = 0.0
     last_ctrl_t  = 0.0
     last_hb_t    = 0.0
+    fps_n = 0
+    fps_t0 = 0.0
+    fps = 0.0
     t0 = None
 
     proto = VisionProtocolV2()
@@ -228,6 +231,9 @@ def main():
         t = time.time()
         if t0 is None:
             t0 = t
+        if MAX_SEC > 0 and (t - t0) > MAX_SEC:
+            print(f"Done. {t - t0:.1f}s elapsed (MAX_SEC={MAX_SEC:.0f}).")
+            break
         dt = t - last_frame_t if last_frame_t > 0 else PID_DT
         dt = clamp(dt, 0.01, 0.2)
         last_frame_t = t
@@ -237,6 +243,14 @@ def main():
         if not ok:
             time.sleep(0.01)
             continue
+
+        fps_n += 1
+        if fps_t0 <= 0.0:
+            fps_t0 = t
+        elif t - fps_t0 >= 1.0:
+            fps = fps_n / (t - fps_t0)
+            fps_n = 0
+            fps_t0 = t
 
         # ── Detector ──
         _dev, _hdg, conf, _vis, dbg = ld.process(bgr)
@@ -316,7 +330,7 @@ def main():
         # ── Console print ──
         if t - last_print_t > PRINT_INTERVAL:
             last_print_t = t
-            print(f"route={route_u8} ex={ex_mm}mm ang={ang_cdeg}cdeg conf={conf_u8} "
+            print(f"fps={fps:.1f} route={route_u8} ex={ex_mm}mm ang={ang_cdeg}cdeg conf={conf_u8} "
                   f"lost={lost} curve={int(curve)} err={err:+.1f}cm ang={angle_err:+.1f}deg")
 
         # ── Display（headless 跳过，帧率不受 waitKey 限制）──
@@ -349,10 +363,6 @@ def main():
 
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
-
-        if MAX_SEC > 0 and (t - t0) > MAX_SEC:
-            print(f"Done. {t - t0:.1f}s elapsed (MAX_SEC={MAX_SEC:.0f}).")
-            break
 
     cap.release()
     cv2.destroyAllWindows()
