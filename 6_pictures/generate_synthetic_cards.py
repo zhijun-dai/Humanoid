@@ -12,7 +12,7 @@
 1. 场景模式（默认）：白场地场景图 + YOLO标注（图卡bbox）+ 外框4角GT
    → 找框验证/训练
 2. 正视图模式（--frontal）：96×96二值图卡 + 增强（腐蚀/膨胀断线等）
-   + 负样本（--negatives）→ CNN分类训练（6类+背景）
+   + 负样本（--negatives）→ 96×96 分类样本（6类+背景）
 
 用法:
     python generate_synthetic_cards.py --count 500 --out synthetic_dataset
@@ -284,7 +284,7 @@ def compose_scene(card, quad, img_w, img_h, interference="full",
 
 
 # ═══════════════════════════════════════════════════════════
-# 正视图模式（CNN分类训练：96×96二值图卡 + 增强 + 负样本）
+# 正视图模式（96×96 二值图卡 + 增强 + 负样本）
 # ═══════════════════════════════════════════════════════════
 
 FRONTAL_SIZE = 96
@@ -720,7 +720,7 @@ def main():
                         choices=["full", "light", "clean"])
     parser.add_argument("--size", type=int, default=960, help="场景宽（默认960）")
     parser.add_argument("--frontal", action="store_true",
-                        help="正视图模式（CNN分类，96×96）")
+                        help="正视图模式（96×96 二值图卡）")
     parser.add_argument("--negatives", type=int, default=0,
                         help="正视图模式负样本数量（类别6）")
     parser.add_argument("--jobs", type=int, default=1, help="并行进程数")

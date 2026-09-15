@@ -36,8 +36,7 @@ def extract_main_contour(warp):
 
 
 def main():
-    sd = ShapeDetector(stable_frames=1, cooldown_ms=0, debug=False,
-                       classify_mode="rules")
+    sd = ShapeDetector(stable_frames=1, cooldown_ms=0, debug=False)
     out = {}
     for idx, (name, _cls, _act) in enumerate(SHAPES):
         # 保守参数场景（贴近比赛摆放），取多张里面积最完整的一条

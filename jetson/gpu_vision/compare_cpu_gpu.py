@@ -31,7 +31,6 @@ print(f"HAS_CUDA: {backend.HAS_CUDA}  "
 
 sd1 = CPU_SD(stable_frames=1, cooldown_ms=0)
 sd2 = ShapeDetectorGPU(stable_frames=1, cooldown_ms=0)
-assert sd2.cnn is not None, "GPU 版应继承 CNN 加载"
 
 from generate_synthetic_cards import render_card, compose_scene  # noqa: E402
 

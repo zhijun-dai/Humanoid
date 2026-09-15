@@ -1,9 +1,8 @@
 # gpu_vision — Jetson GPU 加速版视觉
 
-目标硬件：**Jetson Orin Nano Super 8GB**（Ampere 1024 CUDA 核，JetPack 6.x）。
-视觉预处理（二值化/形态学/透视变换）走 `cv2.cuda`，图卡分类走 ShapeCNN
-（PyTorch，torch.cuda 可用时自动上 GPU）。几何算法（Hough/LSD/轮廓/连通域）
-留 CPU——CUDA 无对应实现或收益小。
+目标硬件：**Jetson Orin Nano Super 8GB**（Ampere 1024 CUDA 核）。
+视觉预处理（二值化/形态学/透视变换）走 `cv2.cuda`，几何算法
+（Hough/LSD/轮廓/连通域）留 CPU——CUDA 无对应实现或收益小。
 
 **cv2.cuda 不可用时自动 CPU 回退**（backend.py 的 HAS_CUDA 探测），回退实现
 与 `jetson/` CPU 版逐算子等价——桌面无 GPU 跑本目录 = 验证正确逻辑。
@@ -15,12 +14,11 @@
 | `backend.py` | cv2.cuda 算子后端：找框二值链 / 巡线二值链 / warp / 核缓存 |
 | `shape_detector_gpu.py` | 图卡找框（继承 CPU 版，预处理链 GPU 化）|
 | `line_detector_gpu.py` | 巡线（process 预处理链 GPU 化）|
-| `cnn 分类` | 复用 `jetson/shape_cnn.py`（共享定义），权重 `jetson/shape_cnn_best_v2.pt` |
 | `vision_camera.py` | 相机源：Windows DSHOW / Linux V4L2 / 视频文件 |
 | `run_robot.py` | 机器人控制器（协议 V2 LINE_CTRL + 一步前瞻）|
 | `probe.py` | 板子到手第一步：CUDA/OpenCV 能力 + 算子计时 |
 | `compare_cpu_gpu.py` | CPU 版 vs GPU 版同帧一致性 |
-| `requirements-gpu.txt` | Jetson 依赖与装法（torch wheelhouse 说明）|
+| `requirements-gpu.txt` | Jetson 依赖与装法 |
 
 ## Jetson 安装
 
@@ -31,12 +29,10 @@ sudo apt install -y v4l-utils
 sudo usermod -aG dialout $USER    # 串口免 sudo，重新登录生效
 ```
 
-**JetPack 7.2**（Ubuntu 24.04 + Python 3.12 + CUDA 13.2；NVIDIA jp wheelhouse
-是 py3.10 的用不了，走上游 cu132 wheel）：
+**JetPack 7.2**（Ubuntu 24.04 + Python 3.12 + CUDA 13.2）：
 ```bash
 python3 -m venv ~/robocup-venv && source ~/robocup-venv/bin/activate
-pip install "numpy<=1.26.4"   # torch cu132 与 numpy 2.x 冲突
-pip install torch==2.12.0+cu132 --index-url https://download.pytorch.org/whl/cu132
+pip install "numpy<=1.26.4"   # 板子预装 OpenCV 按 numpy 1.x 编译
 pip install pyserial
 python probe.py               # OpenCV 探测（预装版是否带 CUDA）
 ```
@@ -51,8 +47,6 @@ OpenCV 4.10/4.13 的 cudev 模块编不过（libcu++ tuple 不兼容，需手改
 先按 `probe.py` + `run_robot.py --headless` 打印的 `fps=` 判断是否值得编：
 控制环只有 10Hz，全链 ≥15 FPS 就不用折腾。
 
-JetPack 6.x 旧路线见 requirements-gpu.txt 注释。
-
 ## 运行
 
 ```bash
@@ -64,7 +58,7 @@ python run_robot.py --no-serial   # 不开串口（纯视觉调试）
 ```
 
 参数 env 覆盖：`STEP_LEN_CM`（机器人步长）、`PREVIEW_GAIN`（一步前瞻增益）、
-`SHAPE_CNN_ENABLE/WEIGHT`、`SERIAL_PORT` 等，见 run_robot.py 头注释。
+`SERIAL_PORT` 等，见 run_robot.py 头注释。
 
 ## 板子验收步骤
 
@@ -76,5 +70,4 @@ python run_robot.py --no-serial   # 不开串口（纯视觉调试）
 
 ## 回退
 
-任意环节（OpenCV 无 CUDA / 权重缺失 / torch 未装）→ 程序不崩：
-backend CPU 回退 + 规则分类兜底（jetson/shape_detector 自带）。
+OpenCV 无 CUDA 时 backend 自动走 CPU 回退（逐算子与 CPU 版等价），程序不崩。

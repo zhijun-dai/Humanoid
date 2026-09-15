@@ -1,6 +1,6 @@
 # Jetson + USB 摄像头 视觉方案（2026 规则）
 
-主线：**几何图卡识别（找框 → CNN 分类）+ 巡线 + 红条距离**。本地 Windows
+主线：**几何图卡识别（找框 → 纯 CV 规则分类）+ 巡线 + 红条距离**。本地 Windows
 调试，最终跑 Jetson（GPU 加速版见 `gpu_vision/`）。
 
 ## 运行
@@ -18,10 +18,7 @@
 ```
 jetson/
   line_detector_v1_warp.py  # 巡线（IPM 鸟瞰 + 红条 + 窄门）
-  shape_detector.py         # 图卡找框 + 分类（CNN 主判，规则兜底）
-  shape_cnn.py              # ShapeCNN 模型定义（训练/推理共享）
-  shape_cnn_best_v2.pt      # 运行时 CNN 权重
-  train_shape_cnn.py        # CNN 训练
+  shape_detector.py         # 图卡找框 + 分类（纯 CV 规则法）
   run_robot.py              # 机器人入口（协议 V2 + 一步前瞻）
   run_real_car.py           # 测试车入口
   vision_main.py            # 调试 Demo

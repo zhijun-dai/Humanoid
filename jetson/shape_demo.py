@@ -1,16 +1,11 @@
 """几何图卡识别 Demo — 支持照片和视频。
 
 用法:
-    python jetson/shape_demo.py --image path/to/photo.jpg --method both
-    python jetson/shape_demo.py --video path/to/video.mp4 --method cv
+    python jetson/shape_demo.py --image path/to/photo.jpg
+    python jetson/shape_demo.py --video path/to/video.mp4
     python jetson/shape_demo.py --image 6_pictures/圆形.png
 
-分类路径（--method）:
-    cv   纯 CV 规则法（多边形拟合+几何特征判定，资格审核用）
-    cnn  ShapeCNN 神经网络分类
-    both 两条路径都算，输出对比（默认）
-
-找框 + 单应矫正对所有路径相同；YOLO 方案用 --yolo 单独启用。
+分类走纯 CV 规则法（多边形拟合+几何特征判定）。YOLO 方案用 --yolo 单独启用。
 """
 import argparse
 import os
@@ -83,15 +78,10 @@ def put_text(img, text, org, color_bgr=(0, 0, 255), size=26):
 
 
 def run_cv(img, detector):
-    """找框+分类（路径由 detector.classify_mode 决定）。
-
-    返回 (shape, action, conf, quad, dbg)；dbg 含 shape_cnn/shape_rules 两路结果。
-    """
+    """找框+分类（纯 CV 规则法）。返回 (shape, action, conf, quad, dbg)。"""
     action, dbg = detector.update(img)
     shape = dbg.get("shape")
-    conf = dbg.get("cnn_prob")
-    if conf is None:
-        conf = 1.0 if shape is not None else 0.0
+    conf = 1.0 if shape is not None else 0.0
     return shape, action, conf, dbg.get("quad"), dbg
 
 
@@ -119,13 +109,11 @@ def main():
     parser.add_argument("--video", type=str, default=None, help="视频路径")
     parser.add_argument("--yolo", action="store_true",
                         help="启用YOLO方案（需ultralytics+权重）")
-    parser.add_argument("--method", choices=("cv", "cnn", "both"), default=None,
-                        help="分类路径: cv=纯CV规则(摄像头模式默认) / cnn=神经网络 / both=两路都算")
     parser.add_argument("--camera", action="store_true",
                         help="摄像头实时识别（默认纯CV）")
     parser.add_argument("--cam", type=int, default=0, help="摄像头索引")
     parser.add_argument("--save-mid", type=str, default=None,
-                        help="保存找框输入图/CNN输入图的目录"
+                        help="保存找框输入图/warp 的目录"
                              "（摄像头模式按 S 键保存当前帧）")
     parser.add_argument("--preprocess", action="store_true",
                         help="YOLO前先做传统CV预处理（灰度/CLAHE/Otsu/形态学）")
@@ -133,14 +121,8 @@ def main():
                         help="保存预处理中间图到指定路径（调试用）")
     args = parser.parse_args()
 
-    # 摄像头模式默认纯 CV，其余默认两路对比
-    method = args.method or ("cv" if args.camera else "both")
-    # 分类路径: cv→rules, cnn→cnn, both→auto+两路都算
-    mode_map = {"cv": ("rules", False), "cnn": ("cnn", False),
-                "both": ("auto", True)}
-    cm, cb = mode_map[method]
     detector = ShapeDetector(stable_frames=1, cooldown_ms=0, debug=False,
-                             roi_ratio=1.0, classify_mode=cm, compare_both=cb)
+                             roi_ratio=1.0)
 
     # YOLO模型（可选）
     model = None
@@ -158,7 +140,7 @@ def main():
         _SCRIPT_DIR, "..", "generated", "shape_debug")
 
     def save_debug(dbg, idx):
-        """保存找框输入图（二值化）+ CNN 输入图（矫正 warp）。"""
+        """保存找框输入图（二值化）+ 矫正后的 warp。"""
         os.makedirs(_mid_dir, exist_ok=True)
         ts = time.strftime("%H%M%S")
         n = 0
@@ -168,17 +150,16 @@ def main():
             print(f"  找框输入图 → {p}")
             n += 1
         if dbg.get("warp") is not None:
-            p = os.path.join(_mid_dir, f"cnn_input_{ts}_{idx}.png")
+            p = os.path.join(_mid_dir, f"warp_{ts}_{idx}.png")
             cv2.imencode(".png", dbg["warp"])[1].tofile(p)
-            print(f"  CNN输入图   → {p}")
+            print(f"  矫正warp    → {p}")
             n += 1
         if n == 0:
             print("  未检测到图卡，无中间图可存")
 
     def process_frame(frame, frame_idx=0):
-        # 找框 + 分类（cv/cnn/both 由 detector 配置决定）
+        # 找框 + 分类
         cv_shape, cv_action, cv_conf, cv_quad, cv_dbg = run_cv(frame, detector)
-        cnn_s = cv_dbg.get("shape_cnn")
         rules_s = cv_dbg.get("shape_rules")
         # 方案B: YOLO（可选预处理：真实帧→白底黑线→喂模型）
         yo_shape, yo_action, yo_conf, yo_box = (None, None, 0.0, None)
@@ -221,7 +202,7 @@ def main():
         hu_d = cv_dbg.get("hu_dist")
         if final is not None:
             src, shape, action, conf = final
-            if detector.classify_mode == "rules" and hu_d is not None:
+            if hu_d is not None:
                 conf_s = f"Hu距离 {hu_d:.3f}"   # 纯CV无概率，用模板距离
             else:
                 conf_s = f"置信度 {conf:.2f}"
@@ -230,15 +211,7 @@ def main():
         else:
             # 找到框但未识别 → 显示原因
             if cv_dbg.get("card_found"):
-                p = cv_dbg.get("cnn_prob")
-                rs = cv_dbg.get("shape_rules")
-                why = []
-                if p is not None:
-                    why.append(f"CNN最高概率 {p:.2f}")
-                if rs is None:
-                    why.append("规则法判不出")
-                label = "找到框但未识别" + ("（" + "，".join(why) + "）"
-                                          if why else "")
+                label = "找到框但未识别（规则法判不出）"
             else:
                 label = "未找到框"
         put_text(disp, label, (10, 8), (0, 0, 255), 26)
@@ -246,20 +219,13 @@ def main():
         def _n(s):
             return SHAPE_NAMES.get(s, s) if s else "-"
         hu_b, hu_d = cv_dbg.get("hu_best"), cv_dbg.get("hu_dist")
-        if detector.classify_mode == "rules":
-            info = f"规则: {_n(rules_s)}"
-            if hu_b:
-                info += f" | Hu: {_n(hu_b)}({hu_d:.3f})"
-        elif detector.classify_mode == "cnn":
-            info = f"CNN: {_n(cnn_s)}"
-        else:
-            info = f"CNN: {_n(cnn_s)} | 规则: {_n(rules_s)}"
-            if hu_b:
-                info += f" | Hu: {_n(hu_b)}({hu_d:.3f})"
+        info = f"规则: {_n(rules_s)}"
+        if hu_b:
+            info += f" | Hu: {_n(hu_b)}({hu_d:.3f})"
         if model is not None:
             info += f" | YOLO: {_n(yo_shape)}"
         put_text(disp, info, (10, 46), (200, 200, 0), 22)
-        return disp, final, (cnn_s, rules_s, hu_b, hu_d), cv_dbg
+        return disp, final, (rules_s, hu_b, hu_d), cv_dbg
 
     # ── 摄像头实时模式 ──
     if args.camera:
@@ -282,11 +248,10 @@ def main():
             return
         aw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         ah = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        mode_name = {"rules": "纯CV", "cnn": "CNN", "auto": "两路对比"}[cm]
-        print(f"=== 摄像头 {args.cam} 实时识别（{mode_name}） {aw}x{ah} ===")
+        print(f"=== 摄像头 {args.cam} 实时识别（纯CV） {aw}x{ah} ===")
         if aw < 1000:
             print("  提示：分辨率偏低，图卡拿近些更容易找到框")
-        print("Q/ESC 退出，S 保存当前找框输入图+CNN输入图")
+        print("Q/ESC 退出，S 保存当前找框输入图+warp")
         frame_idx = 0
         fails = 0
         while True:
@@ -321,10 +286,9 @@ def main():
             print(f"无法读取 {args.image}")
             return
         disp, final, paths, dbg = process_frame(img)
-        cnn_s, rules_s, hu_b, hu_d = paths
+        rules_s, hu_b, hu_d = paths
         print(f"\n=== {os.path.basename(args.image)} ===")
-        print(f"  CNN: {SHAPE_NAMES.get(cnn_s, '-') if cnn_s else '-'}"
-              f" | 规则(纯CV): {SHAPE_NAMES.get(rules_s, '-') if rules_s else '-'}")
+        print(f"  规则(纯CV): {SHAPE_NAMES.get(rules_s, '-') if rules_s else '-'}")
         if hu_b:
             print(f"  Hu矩: {SHAPE_NAMES.get(hu_b, hu_b)} (距离 {hu_d:.4f}，辅助参考)")
         if final:
@@ -357,11 +321,11 @@ def main():
             if final:
                 src, shape, action, conf = final
                 print(f"  帧{frame_idx:>4}: {SHAPE_NAMES.get(shape, shape)} 动作{action} "
-                      f"({src} conf={conf:.2f})  [CNN:{paths[0] or '-'} "
-                      f"规则:{paths[1] or '-'} Hu:{paths[2] or '-'}]")
+                      f"({src} conf={conf:.2f})  [规则:{paths[0] or '-'} "
+                      f"Hu:{paths[1] or '-'}]")
             else:
-                print(f"  帧{frame_idx:>4}: 未识别  [CNN:{paths[0] or '-'} "
-                      f"规则:{paths[1] or '-'} Hu:{paths[2] or '-'}]")
+                print(f"  帧{frame_idx:>4}: 未识别  [规则:{paths[0] or '-'} "
+                      f"Hu:{paths[1] or '-'}]")
             cv2.imshow("Video", disp)
             frame_idx += 1
             if cv2.waitKey(1) & 0xFF == 27:

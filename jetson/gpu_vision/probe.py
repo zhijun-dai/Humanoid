@@ -31,13 +31,6 @@ def main():
     print("  cv2.cuda 设备数:", cv2.cuda.getCudaEnabledDeviceCount())
     print("== OpenCV 编译选项 ==")
     _print_cuda_build_info()
-    print("== torch ==")
-    try:
-        import torch
-        print(f"  torch {torch.__version__} cuda_available={torch.cuda.is_available()}")
-    except Exception as e:
-        print(f"  torch 不可用: {e}")
-
     print("== backend ==")
     print("  HAS_CUDA:", backend.HAS_CUDA)
 

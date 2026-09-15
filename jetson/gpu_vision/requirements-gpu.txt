@@ -1,30 +1,14 @@
 # GPU 版运行依赖（Jetson Orin / 桌面通用）
 #
-# ⚠ 不要用普通 pip 源装 torch（aarch64 无 CUDA wheel）。
-#
-# ── Jetson JetPack 7.2（实测路线，2026-06 NVIDIA 论坛验证）──
-# 系统: Ubuntu 24.04 + Python 3.12 + CUDA 13.2。
-# 注意: NVIDIA 官方 jp/v6x wheelhouse 是 Python 3.10 编译，JP7.2 用不了；
-#       改用上游 PyTorch 官方 cu132 aarch64 wheel。
-#
+# Jetson（JetPack 7.2，Ubuntu 24.04 + Python 3.12）：
 #   python3 -m venv ~/robocup-venv && source ~/robocup-venv/bin/activate
-#   pip install "numpy<=1.26.4"          # torch cu132 wheel 与 numpy 2.x 冲突
-#   pip install torch==2.12.0+cu132 --index-url https://download.pytorch.org/whl/cu132
-#   pip install pyserial
-#   # OpenCV: 先探测预装版是否带 CUDA
-#   #   python3 -c "import cv2; print(cv2.cuda.getCudaEnabledDeviceCount())"
-#   # 不带 → 用 JetPack 预装或 4.8.x 带 CUDA wheel（pip 的 opencv-python 5.0 有坑）
+#   pip install "numpy<=1.26.4"     # 板子预装 OpenCV 按 numpy 1.x 编译
+#   pip install -r requirements-gpu.txt
+#   python probe.py                 # 探测 OpenCV 是否带 CUDA
 #
-# ── Jetson JetPack 6.x（旧）──
-#   pip install torch --index-url \
-#     https://developer.download.nvidia.com/compute/redist/jp/v61/pytorch   # 按小版本
-#
-# 桌面 CPU 验证环境：照用仓库根 requirements.txt（opencv-python + CPU torch），
+# 桌面 CPU 验证环境照用仓库根 requirements.txt，
 # gpu_vision 自动走 CPU 回退，输出与 CPU 版一致。
 
 opencv-python>=4.8,<5
 numpy>=1.24
 pyserial>=3.5
-# Jetson 装法见上（JP7.2: cu132 wheel），桌面 CPU 验证：
-#   pip install torch --index-url https://download.pytorch.org/whl/cpu
-torch>=2.0

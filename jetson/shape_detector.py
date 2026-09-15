@@ -21,14 +21,6 @@ import cv2
 import time
 import numpy as np
 
-try:
-    import torch
-    from shape_cnn import ShapeCNN, CLASS_NAMES
-except Exception:
-    torch = None
-    ShapeCNN = None
-    CLASS_NAMES = None
-
 from camera_config import load as _load_camera
 
 _CAM = _load_camera()
@@ -46,16 +38,11 @@ class ShapeDetector:
         cooldown_ms=3200,       # 发送冷却
         roi_ratio=1.0,          # 检测ROI：画面下roi_ratio区域（默认全图）
         debug=True,
-        classify_mode="rules",  # rules=纯CV(当前主线) / cnn=只CNN / auto=CNN主判规则兜底
-        compare_both=False,     # True: 两条路径都算，结果放 dbg
     ):
         self.stable_frames = stable_frames
         self.cooldown_ms = cooldown_ms
         self.roi_ratio = roi_ratio
         self.debug = debug
-        self.classify_mode = os.environ.get("SHAPE_CLASSIFY_MODE",
-                                            classify_mode)
-        self.compare_both = compare_both
 
         # ── 找框参数（集中管理）──
         self.cfg = {
@@ -100,9 +87,6 @@ class ShapeDetector:
             "warp_size": 200,
             "warp_inset": 0.14,      # warp向内收缩比例（外框环不进warp）
             "track_iou": 0.5,        # 帧间续锁IoU
-            # CNN 分类（路线B分类器）
-            "cnn_enable": os.environ.get("SHAPE_CNN_ENABLE", "1") != "0",
-            "cnn_conf_min": 0.85,    # 低于此置信不输出（回退规则法）
         }
 
         # 动作映射: shape_name -> action_number (1-6)
@@ -136,25 +120,6 @@ class ShapeDetector:
                 self.hu_templates = {k: f[k] for k in f.files}
         except Exception:
             self.hu_templates = {}
-
-        # ── CNN 分类器（权重缺失/torch缺失 → 规则法兜底）──
-        self.cnn = None
-        self.last_cnn_prob = None
-        if self.cfg["cnn_enable"] and torch is not None:
-            try:
-                w_path = os.environ.get(
-                    "SHAPE_CNN_WEIGHT",
-                    os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                 "shape_cnn_best_v2.pt"))
-                model = ShapeCNN()
-                model.load_state_dict(
-                    torch.load(w_path, map_location="cpu"))
-                model.eval()
-                self.cnn = model
-                print(f"[shape] CNN 已加载: {w_path}")
-            except Exception as e:
-                print(f"[shape] WARNING: CNN 加载失败({e})，回退规则分类")
-                self.cnn = None
 
     def _card_area_at_dist(self, z_cm):
         """图卡（10cm×10cm 平放地面）在水平距离 z_cm 处的工作图像素面积。
@@ -275,11 +240,9 @@ class ShapeDetector:
             dbg["quad_work"] = best  # 工作图(960×540)坐标，用于叠加在二值图上
             dbg["closure"] = best_score
         else:
-            self.last_cnn_prob = None  # 无框路径未跑 CNN
             shape = self._classify_shape_full(binary)
             dbg["fallback"] = True
 
-        dbg["cnn_prob"] = self.last_cnn_prob if self.cnn is not None else None
         if shape is None:
             self.candidate = None
             self.candidate_count = 0
@@ -297,7 +260,7 @@ class ShapeDetector:
         """复用YOLO预处理方案（shape_preprocess）+ 找框保留环节。
 
         YOLO方案：blackhat(31) → adaptive(31,-12) → close(3×3)；
-        不反转（YOLO要白底黑线，找框/CNN要黑底白线=线白）。
+        不反转（YOLO要白底黑线，找框要黑底白线=线白）。
         找框保留：各向异性闭（桥接竖边断点）、笔画宽过滤（核31会
         增强2cm巡线，必须按线宽拒掉）、细长度过滤（拒圆斑污渍）。"""
         kbh = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
@@ -893,57 +856,16 @@ class ShapeDetector:
         return inter / max(a1 + a2 - inter, 1e-6)
 
     # ═══════════════════════════════════════════════════════════
-    # 形状分类双路径：CNN（_classify_cnn）/ 纯CV规则（_classify_shape）
+    # 形状分类（纯 CV 规则法）
     # ═══════════════════════════════════════════════════════════
 
     def _classify(self, warp, dbg):
-        """按 classify_mode 选路径；compare_both 时两路都算存 dbg。
-
-        auto = CNN 主判，判不出（背景/低置信/无权重）回退规则法
-        cnn  = 只用 CNN
-        rules= 只用纯 CV 规则法（资格审核/对比用）
-        """
-        mode = self.classify_mode
-        shape_cnn = shape_rules = None
-        self.last_cnn_prob = None
         self.last_hu = None
-        if mode in ("auto", "cnn") and self.cnn is not None:
-            shape_cnn = self._classify_cnn(warp)
-        if (mode == "rules" or self.compare_both
-                or (mode == "auto" and shape_cnn is None)):
-            shape_rules = self._classify_shape(warp)
-        if mode == "rules":
-            shape = shape_rules
-        elif mode == "cnn":
-            shape = shape_cnn
-        else:
-            shape = shape_cnn if shape_cnn is not None else shape_rules
-        dbg["shape_cnn"] = shape_cnn
-        dbg["shape_rules"] = shape_rules
+        shape = self._classify_shape(warp)
+        dbg["shape_rules"] = shape
         dbg["hu_best"] = self.last_hu[0] if self.last_hu else None
         dbg["hu_dist"] = self.last_hu[1] if self.last_hu else None
         return shape
-
-    def _classify_cnn(self, warp):
-        """ShapeCNN 分类 warp200（黑底白线）→ shape name 或 None。
-
-        输入与训练一致：_warp_card 输出（黑底白线 255）→ resize 96
-        INTER_LINEAR → /255 → (1,1,96,96)。label 6=背景 或
-        置信 < cnn_conf_min → None（调用方回退规则法）。
-        """
-        try:
-            x = cv2.resize(warp, (96, 96), interpolation=cv2.INTER_LINEAR)
-            x = torch.from_numpy(x).float().unsqueeze(0).unsqueeze(0) / 255.0
-            with torch.no_grad():
-                prob = torch.softmax(self.cnn(x), dim=1)[0]
-            p_max, idx = float(prob.max()), int(prob.argmax())
-            self.last_cnn_prob = p_max
-            if idx >= len(CLASS_NAMES) or p_max < self.cfg["cnn_conf_min"]:
-                return None
-            return CLASS_NAMES[idx]
-        except Exception:
-            self.last_cnn_prob = None
-            return None
 
     def _classify_shape(self, warp):
         """先直接分类；失败且检测到边缘粘连（田字形）时裁边重试。"""

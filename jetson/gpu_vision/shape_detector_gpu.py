@@ -3,7 +3,7 @@
 GPU 化范围（按收益）：
 - _binary_selective 前半链（blackhat+adaptive+close+aniso，960×540 最大收益段）
 - _warp_card 的 warpPerspective（几何构建保留原样）
-笔画宽/细长度过滤、候选生成、几何验证、CNN 分类（共享 jetson/shape_cnn）
+笔画宽/细长度过滤、候选生成、几何验证、形状分类
 留 CPU：几何算法无 CUDA 对应或收益小。
 
 cv2.cuda 不可用时 backend 自动 CPU 回退（逐算子与原 CPU 版等价）。
