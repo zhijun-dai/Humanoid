@@ -105,6 +105,7 @@ class ShapeDetector:
         self.last_send_ms = None
         self.first_candidate_ms = None
         self.last_quad = None       # 帧间跟踪锁
+        self._lsd = None            # LSD 检测器（复用，创建有开销）
 
         # ── 面积下限：按相机几何算（图卡在 max_dist_cm 处的投影像素面积）──
         self.cfg["area_min"] = int(self._card_area_at_dist(
@@ -303,13 +304,16 @@ class ShapeDetector:
         keep = np.ones(n, bool)
         keep[0] = False  # 背景
         keep[1:][bad] = False
-        return (np.isin(labels, np.flatnonzero(keep)).astype(np.uint8) * 255)
+        lut = np.zeros(n, np.uint8)
+        lut[keep] = 255
+        return lut[labels]
 
     def _stroke_width_filter(self, binary):
         """笔画宽过滤：CC内DT中位半径×2∈[1.5,7]px（拒巡线、留细框线）。
 
-        向量化：labels排序后reduceat分段取中位，避免Python逐CC循环
-        （视频帧CC数百→千，原循环是预处理耗时大头）。"""
+        一次 lexsort（label 主键、DT 次键）后各组 DT 已有序，中位按下标直取，
+        偶数个取中间两个均值（与 np.median 逐位一致）。原实现逐 CC 调
+        np.median，视频帧 CC 可达数千时是全链最大单项。"""
         dt = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
         n, labels, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
         if n <= 1:
@@ -320,20 +324,20 @@ class ShapeDetector:
         valid = lab_v > 0
         lab_s = lab_v[valid]
         dt_s = dt_v[valid]
-        order = np.argsort(lab_s, kind="stable")
+        counts = np.bincount(lab_s, minlength=n)
+        order = np.lexsort((dt_s, lab_s))
         lab_o = lab_s[order]
         dt_o = dt_s[order]
-        counts = np.bincount(lab_s, minlength=n)
         starts = np.searchsorted(lab_o, np.arange(n))
-        med = np.zeros(n)
-        for lid in range(1, n):
-            seg = dt_o[starts[lid]:starts[lid] + counts[lid]]
-            seg = seg[seg > 0]
-            if len(seg):
-                med[lid] = np.median(seg)
+        mid_lo = starts + np.maximum(counts - 1, 0) // 2
+        mid_hi = starts + counts // 2
+        med = np.where(counts > 0,
+                       (dt_o[mid_lo] + dt_o[mid_hi]) * 0.5, 0.0)
         keep = (med >= lo / 2) & (med <= hi / 2)
         keep[0] = False
-        return (np.isin(labels, np.flatnonzero(keep)).astype(np.uint8) * 255)
+        lut = np.zeros(n, np.uint8)
+        lut[keep] = 255
+        return lut[labels]
 
     # ═══════════════════════════════════════════════════════════
     # S2 候选生成
@@ -350,8 +354,9 @@ class ShapeDetector:
         if lines is not None:
             hough_segs = [tuple(int(v) for v in ln) for ln in lines[:, 0]]
         lsd_segs = []
-        lsd = cv2.createLineSegmentDetector(cv2.LSD_REFINE_STD)
-        det = lsd.detect(binary)[0]
+        if self._lsd is None:
+            self._lsd = cv2.createLineSegmentDetector(cv2.LSD_REFINE_STD)
+        det = self._lsd.detect(binary)[0]
         if det is not None:
             lsd_segs = [tuple(int(v) for v in s[0]) for s in det]
         return hough_segs, lsd_segs
