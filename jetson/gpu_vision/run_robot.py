@@ -238,10 +238,10 @@ def main():
         dt = clamp(dt, 0.01, 0.2)
         last_frame_t = t
 
-        # ── Grab frame ──
+        # ── Grab frame ──（采集线程常驻，无新帧时短暂让出 CPU）
         ok, bgr = cap.read()
         if not ok:
-            time.sleep(0.01)
+            time.sleep(0.002)
             continue
 
         fps_n += 1

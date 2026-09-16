@@ -1,11 +1,16 @@
 """相机/视频源 — Windows(DSHOW) / Linux(V4L2) 自动选择 + 文件回放。
 
+相机模式下采集走独立线程常驻 read()，主线程取最新帧：把等待出帧的时间
+（MJPEG 720p 约 33ms）藏进处理时间里，主循环不再串行等待。
+
 用法:
-    cam = VisionCamera(cam_idx=0, width=1280, height=720)   # 相机
-    cam = VisionCamera(video_path="run.mp4")                 # 视频文件
+    cam = VisionCamera(cam_idx=0, width=1280, height=720)   # 相机（异步）
+    cam = VisionCamera(video_path="run.mp4")                 # 视频文件（同步）
     ok, frame = cam.read()
 """
 import sys
+import time
+import threading
 import cv2
 
 
@@ -14,6 +19,11 @@ class VisionCamera:
                  video_path=None, width_640=False):
         self.video_path = video_path
         self.cap = None
+        self._frame = None
+        self._seq = 0
+        self._last_seq = -1
+        self._stop = False
+        self._thread = None
         if video_path:
             self.cap = cv2.VideoCapture(video_path)
             self.actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -37,11 +47,40 @@ class VisionCamera:
             ok, _ = self.cap.read()
             if ok:
                 break
+        self._thread = threading.Thread(target=self._grab_loop, daemon=True)
+        self._thread.start()
+        for _ in range(200):        # 等首帧就绪，最长 2s
+            if self._frame is not None:
+                break
+            time.sleep(0.01)
+
+    def _grab_loop(self):
+        while not self._stop:
+            ok, f = self.cap.read()
+            if ok:
+                # GIL 保证引用赋值原子，处理线程只会拿到完整帧
+                self._frame = f
+                self._seq += 1
+            else:
+                time.sleep(0.005)
 
     def read(self):
-        return self.cap.read()
+        """取最新帧；返回 (False, None) 表示自上次调用后没有新帧。
+
+        返回的数组由采集线程持有并被下一帧替换，调用方不要原地修改。
+        """
+        if self._thread is None:
+            return self.cap.read()
+        seq = self._seq
+        if self._frame is None or seq == self._last_seq:
+            return False, None
+        self._last_seq = seq
+        return True, self._frame
 
     def release(self):
+        self._stop = True
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
         if self.cap is not None:
             self.cap.release()
 
