@@ -419,11 +419,14 @@ class LineDetector:
         the last row and report the bar as always ~12cm away.
         """
         hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-        hh = hsv[:, :, 0]
-        ss = hsv[:, :, 1]
-        vv = hsv[:, :, 2]
-        mask = (((hh <= self.red_h_max) | (hh >= self.red_h_min))
-                & (ss >= self.red_s_min) & (vv >= self.red_v_min)).astype(np.uint8)
+        m_lo = cv2.inRange(hsv, (0, self.red_s_min, self.red_v_min),
+                           (self.red_h_max, 255, 255))
+        m_hi = cv2.inRange(hsv, (self.red_h_min, self.red_s_min, self.red_v_min),
+                           (180, 255, 255))
+        mask = cv2.bitwise_or(m_lo, m_hi)
+
+        if cv2.countNonZero(mask) < self.red_min_pixels:
+            return None
 
         n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
         best, best_area, best_bottom = -1, 0, -1

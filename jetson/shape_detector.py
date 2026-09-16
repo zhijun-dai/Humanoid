@@ -457,19 +457,19 @@ class ShapeDetector:
             seen_keys.add(key)
             uniq.append(s)
         uniq.sort(key=lambda s: -(np.hypot(s[2]-s[0], s[3]-s[1])))
-        segs = uniq[:200]
+        segs = [tuple(float(v) for v in s) for s in uniq[:200]]
         N = len(segs)
         if N < 4:
             return []
-        angs = np.zeros(N)
-        ex = np.zeros((N, 2), np.float32)
-        ey = np.zeros((N, 2), np.float32)
-        for i, (x1, y1, x2, y2) in enumerate(segs):
-            th = abs(np.degrees(np.arctan2(y2-y1, x2-x1))) % 180
-            angs[i] = th if th <= 90 else 180 - th
-            ex[i] = (x1, x2)
-            ey[i] = (y1, y2)
+        angs = []
+        ex, ey = [], []
+        for (x1, y1, x2, y2) in segs:
+            th = abs(math.degrees(math.atan2(y2-y1, x2-x1))) % 180
+            angs.append(th if th <= 90 else 180 - th)
+            ex.append((x1, x2))
+            ey.append((y1, y2))
         # 角点：近垂直对且交点在近端端点gap内
+        # 纯 Python 算术：O(N²) 内层对数运算，numpy 标量开销远大于计算本身
         partners = [set() for _ in range(N)]
         for i in range(N):
             xi1, yi1, xi2, yi2 = segs[i]
@@ -485,9 +485,8 @@ class ShapeDetector:
                     continue
                 t = ((xi1-xj1)*(yj1-yj2) - (yi1-yj1)*(xj1-xj2)) / denom
                 px, py = xi1 + t*(xi2-xi1), yi1 + t*(yi2-yi1)
-                # 到两段最近端点的距离（标量，避免numpy逐对开销）
-                d1 = min(np.hypot(px-xi1, py-yi1), np.hypot(px-xi2, py-yi2))
-                d2 = min(np.hypot(px-xj1, py-yj1), np.hypot(px-xj2, py-yj2))
+                d1 = min(math.hypot(px-xi1, py-yi1), math.hypot(px-xi2, py-yi2))
+                d2 = min(math.hypot(px-xj1, py-yj1), math.hypot(px-xj2, py-yj2))
                 if d1 <= gap and d2 <= gap:
                     partners[i].add(j)
                     partners[j].add(i)
@@ -511,7 +510,7 @@ class ShapeDetector:
                         p, q = cl[m], cl[n]
                         if p not in v_idx or q not in v_idx:
                             continue
-                        if ex[p].mean() > ex[q].mean():
+                        if (ex[p][0] + ex[p][1]) > (ex[q][0] + ex[q][1]):
                             p, q = q, p
                         qd = self._quad_from_lines(segs[i], segs[j], segs[p], segs[q])
                         if qd is None:
@@ -546,13 +545,24 @@ class ShapeDetector:
     def _quad_close(a, b, tol=8.0):
         """两quad是否重复：a的4角到b的最近角距离均值≤tol。
 
-        不用bbox-IoU（斜卡bbox重叠大但多边形不重叠，会误判重复）。"""
-        pa = a.astype(np.float32)
-        pb = b.astype(np.float32)
+        不用bbox-IoU（斜卡bbox重叠大但多边形不重叠，会误判重复）。
+        纯 Python 算术而非 numpy：本函数在候选去重里被调数万次，
+        4×2 小数组上的 numpy 调用开销远大于计算本身。
+        """
+        pa = a.ravel().tolist() if isinstance(a, np.ndarray) else list(a)
+        pb = b.ravel().tolist() if isinstance(b, np.ndarray) else list(b)
         d = 0.0
-        for p in pa:
-            d += np.min(np.linalg.norm(pb - p, axis=1))
-        return d / 4.0 <= tol
+        for i in range(0, 8, 2):
+            px, py = pa[i], pa[i + 1]
+            best = 1e18
+            for j in range(0, 8, 2):
+                dx = pb[j] - px
+                dy = pb[j + 1] - py
+                dd = dx * dx + dy * dy
+                if dd < best:
+                    best = dd
+            d += math.sqrt(best)
+        return d * 0.25 <= tol
 
     @staticmethod
     def _line_intersect(l1, l2):
