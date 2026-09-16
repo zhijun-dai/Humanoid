@@ -26,6 +26,9 @@ def open_camera(idx, width, height, warmup=3):
             cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
     else:
         cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+    # USB2.0 带宽下 YUY2 到 1280×720 只有 10fps，MJPEG 有 30fps。
+    # 必须先设格式再设分辨率；不支持 MJPG 的相机（多为笔记本内置）会忽略。
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
     for _ in range(warmup):

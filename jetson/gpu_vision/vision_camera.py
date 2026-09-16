@@ -22,6 +22,10 @@ class VisionCamera:
         # Windows 用 DSHOW，Linux (Jetson) 用 V4L2
         api = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_V4L2
         self.cap = cv2.VideoCapture(cam_idx, api)
+        # USB2.0 带宽下 YUY2 到 1280×720 只有 10fps（未压缩 1.84MB/帧），
+        # MJPEG 有 30fps。必须先设格式再设分辨率，否则驱动会按默认格式重排。
+        # 不支持 MJPG 的相机（多为笔记本内置）会忽略，退回默认格式。
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         if width_640:
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
@@ -51,3 +55,11 @@ class VisionCamera:
 
     def is_opened(self):
         return self.cap is not None and self.cap.isOpened()
+
+    @property
+    def fourcc(self):
+        """驱动实际生效的像素格式（4 字符），用于确认 MJPG 有没有设上。"""
+        if self.cap is None:
+            return "----"
+        v = int(self.cap.get(cv2.CAP_PROP_FOURCC))
+        return "".join(chr((v >> (8 * i)) & 0xFF) for i in range(4))
