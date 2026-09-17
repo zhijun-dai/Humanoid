@@ -72,6 +72,9 @@ class ShapeDetector:
             "cam_vfov_deg": _CAM["vfov_deg"],
             "max_dist_cm": float(os.environ.get("SHAPE_MAX_DIST_CM", "80.0")),
             # 最远识别距离：面积下限由该距离的图卡投影面积决定（env 可调）
+            # 触发距离：图卡进到这个距离内才允许发动作指令（拦场地误检）
+            "trigger_dist_cm": float(os.environ.get("SHAPE_TRIGGER_DIST_CM",
+                                                    "40.0")),
             "ang_min": 40,           # quad内角范围（度）；远桶GT实测38.6-143.5°
             "ang_max": 150,          # 原135/45误杀远桶透视压扁+旋转卡
             "edge_h_tol": 25.0,      # 边方向容差：至少2条边接近水平（±此角度）
@@ -105,11 +108,21 @@ class ShapeDetector:
         self.last_send_ms = None
         self.first_candidate_ms = None
         self.last_quad = None       # 帧间跟踪锁
+        self.track = []             # 候选框历史 (t_ms, cx, cy, box_w)，形状切换时清空
+        self.lane_offset_cm = None  # 机身相对赛道中心的横向偏差cm，update() 传入
+        # 触发闩锁：发过指令后须先"检测不到图卡"若干帧才重新武装，
+        # 否则动作结束→恢复巡线时同一张卡还在视野内，会被反复触发停车
+        self.armed = True
+        self.miss_count = 0
         self._lsd = None            # LSD 检测器（复用，创建有开销）
 
         # ── 面积下限：按相机几何算（图卡在 max_dist_cm 处的投影像素面积）──
         self.cfg["area_min"] = int(self._card_area_at_dist(
             self.cfg["max_dist_cm"]))
+
+        # ── 触发门槛：按相机几何算（图卡进到 trigger_dist_cm 时的框宽/中心y）──
+        self.cfg["trigger_box_w"], self.cfg["trigger_y"] = \
+            self._triggers_at_dist(self.cfg["trigger_dist_cm"])
 
         # ── Hu 矩模板（辅助判据，不改判定树；缺失则跳过）──
         self.hu_templates = {}
@@ -121,6 +134,24 @@ class ShapeDetector:
                 self.hu_templates = {k: f[k] for k in f.files}
         except Exception:
             self.hu_templates = {}
+
+    def _triggers_at_dist(self, z_cm):
+        """触发距离 → (最小框宽px, 最小框中心y)。
+
+        与 _card_area_at_dist 同一 pinhole 模型：图卡宽 10cm 投影为
+        fx·10/zc，故像素宽可反推距离。距离越小 → 框越大、y 越靠下。
+        返回的门槛即"图卡刚好进到 z_cm 时"的值，可作 >= 判据。
+        """
+        h = self.cfg["cam_height_cm"]
+        th = math.radians(self.cfg["cam_pitch_deg"])
+        vfov = math.radians(self.cfg["cam_vfov_deg"])
+        fy = WORK_H / (2.0 * math.tan(vfov / 2.0))
+        hfov = 2.0 * math.atan(math.tan(vfov / 2.0) * WORK_W / WORK_H)
+        fx = WORK_W / (2.0 * math.tan(hfov / 2.0))
+        z = max(1.0, z_cm)
+        zc = h * math.sin(th) + z * math.cos(th)
+        y_c = WORK_H / 2.0 + fy * (h * math.cos(th) - z * math.sin(th)) / zc
+        return fx * 10.0 / zc, y_c
 
     def _card_area_at_dist(self, z_cm):
         """图卡（10cm×10cm 平放地面）在水平距离 z_cm 处的工作图像素面积。
@@ -154,12 +185,16 @@ class ShapeDetector:
     # 主入口
     # ═══════════════════════════════════════════════════════════
 
-    def update(self, bgr_or_gray):
+    def update(self, bgr_or_gray, lane_offset_cm=None):
         """返回 (action_number, debug_dict) 或 (None, None)。
 
         输入归一化：任意分辨率 → resize到960×540（参数标定基准，
         YOLO方案A同款）——参数与分辨率解耦；输出quad坐标映射回原图。
+
+        lane_offset_cm: 机身相对赛道中心的横向偏差（cm，正值=赛道中心在
+        画面右侧）。用于把图卡位置约束在赛道两条边线内；不传则按画面中央算。
         """
+        self.lane_offset_cm = lane_offset_cm
         if len(bgr_or_gray.shape) == 3:
             gray = cv2.cvtColor(bgr_or_gray, cv2.COLOR_BGR2GRAY)
         else:
@@ -202,7 +237,13 @@ class ShapeDetector:
         # 不采样不warp），通过的才做完整验证（采样+DT+warp200）——
         # 实测512候选完整验证2.5s → 预筛后剩几十个
         best, best_score, scores = None, 0.0, []
+        y_split = self.cfg["trigger_y"]
         for q in quads:
+            # 图卡只可能出现在画面下半部。框未完整进入下半图（还有部分在
+            # 上半图）说明它太远或根本不是地面上的卡，直接丢弃 —— 省掉后续
+            # 几何验证/refine/warp/分类的开销，也挡掉画面上半部的纹理误检。
+            if float(np.asarray(q)[:, 1].min()) < y_split:
+                continue
             if not self._geom_ok(q):
                 continue
             q = self._refine_quad(binary, q)
@@ -241,14 +282,18 @@ class ShapeDetector:
             dbg["quad_work"] = best  # 工作图(960×540)坐标，用于叠加在二值图上
             dbg["closure"] = best_score
         else:
-            shape = self._classify_shape_full(binary)
+            shape = self._classify_shape_full(binary, dbg)
             dbg["fallback"] = True
 
         if shape is None:
             self.candidate = None
             self.candidate_count = 0
+            self.miss_count += 1
+            if self.miss_count >= 4:
+                self.armed = True
             dbg["shape"] = None
             return None, dbg
+        self.miss_count = 0
 
         dbg["shape"] = shape
         return self._confirm(shape, dbg)
@@ -473,38 +518,40 @@ class ShapeDetector:
             angs.append(th if th <= 90 else 180 - th)
             ex.append((x1, x2))
             ey.append((y1, y2))
-        # 角点：近垂直对且交点在近端端点gap内
-        # 纯 Python 算术：O(N²) 内层对数运算，numpy 标量开销远大于计算本身
+        # 角点：近垂直对且交点在近端端点gap内。
+        # 向量化算 N×N 交点与端点距（N 上限200，矩阵 320KB 可接受），
+        # 逐对纯 Python 版本在此处有 2 万次迭代 / 百万次 min-max 调用。
+        S = np.asarray(segs, np.float64)
+        sx1, sy1, sx2, sy2 = S[:, 0], S[:, 1], S[:, 2], S[:, 3]
+        A = np.asarray(angs, np.float64)
+        DA = np.abs(A[:, None] - A[None, :])
+        DA = np.minimum(DA, 180.0 - DA)
+        X1, Y1, X2, Y2 = sx1[:, None], sy1[:, None], sx2[:, None], sy2[:, None]
+        U1, V1, U2, V2 = sx1[None, :], sy1[None, :], sx2[None, :], sy2[None, :]
+        denom = (X1 - X2) * (V1 - V2) - (Y1 - Y2) * (U1 - U2)
+        ok = ((DA >= 35) & (DA <= 145)) & (np.abs(denom) >= 1e-9)
+        t = ((X1 - U1) * (V1 - V2) - (Y1 - V1) * (U1 - U2)) / np.where(ok, denom, 1.0)
+        px = X1 + t * (X2 - X1)
+        py = Y1 + t * (Y2 - Y1)
+        d1 = np.minimum(np.hypot(px - X1, py - Y1), np.hypot(px - X2, py - Y2))
+        d2 = np.minimum(np.hypot(px - U1, py - V1), np.hypot(px - U2, py - V2))
+        ii, jj = np.nonzero(np.triu(ok & (d1 <= gap) & (d2 <= gap), 1))
         partners = [set() for _ in range(N)]
-        for i in range(N):
-            xi1, yi1, xi2, yi2 = segs[i]
-            ai = angs[i]
-            for j in range(i+1, N):
-                da = abs(ai - angs[j])
-                da = min(da, 180.0 - da)
-                if da < 35 or da > 145:
-                    continue
-                xj1, yj1, xj2, yj2 = segs[j]
-                denom = (xi1-xi2)*(yj1-yj2) - (yi1-yi2)*(xj1-xj2)
-                if abs(denom) < 1e-9:
-                    continue
-                t = ((xi1-xj1)*(yj1-yj2) - (yi1-yj1)*(xj1-xj2)) / denom
-                px, py = xi1 + t*(xi2-xi1), yi1 + t*(yi2-yi1)
-                d1 = min(math.hypot(px-xi1, py-yi1), math.hypot(px-xi2, py-yi2))
-                d2 = min(math.hypot(px-xj1, py-yj1), math.hypot(px-xj2, py-yj2))
-                if d1 <= gap and d2 <= gap:
-                    partners[i].add(j)
-                    partners[j].add(i)
+        for a_, b_ in zip(ii.tolist(), jj.tolist()):
+            partners[a_].add(b_)
+            partners[b_].add(a_)
         h_idx = [i for i in range(N) if angs[i] <= 62]
         v_idx = [i for i in range(N) if angs[i] >= 28]
+        v_set = set(v_idx)
+        ymin = [min(a, b) for a, b in ey]
+        ymax = [max(a, b) for a, b in ey]
+        exs = [a + b for a, b in ex]
         quads, seen = [], []
         for a in range(len(h_idx)):
             for b in range(a+1, len(h_idx)):
                 i, j = h_idx[a], h_idx[b]
-                # 上下边对：两段y投影须分离（ey存端点序，需先取min/max）
-                yi0, yi1 = min(ey[i][0], ey[i][1]), max(ey[i][0], ey[i][1])
-                yj0, yj1 = min(ey[j][0], ey[j][1]), max(ey[j][0], ey[j][1])
-                if min(yi1, yj1) - max(yi0, yj0) > 0:
+                # 上下边对：两段y投影须分离
+                if min(ymax[i], ymax[j]) - max(ymin[i], ymin[j]) > 0:
                     continue
                 common = partners[i] & partners[j]
                 if len(common) < 2:
@@ -513,14 +560,13 @@ class ShapeDetector:
                 for m in range(len(cl)):
                     for n in range(m+1, len(cl)):
                         p, q = cl[m], cl[n]
-                        if p not in v_idx or q not in v_idx:
+                        if p not in v_set or q not in v_set:
                             continue
-                        if (ex[p][0] + ex[p][1]) > (ex[q][0] + ex[q][1]):
+                        if exs[p] > exs[q]:
                             p, q = q, p
-                        qd = self._quad_from_lines(segs[i], segs[j], segs[p], segs[q])
-                        if qd is None:
+                        qf = self._quad_from_lines(segs[i], segs[j], segs[p], segs[q])
+                        if qf is None:
                             continue
-                        qf = qd.astype(np.float32)
                         x, y, w, h = cv2.boundingRect(qf.astype(np.int32))
                         if w < 24 or h < 10:
                             continue
@@ -576,7 +622,7 @@ class ShapeDetector:
         if abs(denom) < 1e-9:
             return None
         t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
-        return np.array([x1 + t * (x2 - x1), y1 + t * (y2 - y1)])
+        return (x1 + t * (x2 - x1), y1 + t * (y2 - y1))
 
     def _quad_from_lines(self, top, bot, lft, rgt):
         tl = self._line_intersect(lft, top)
@@ -585,7 +631,7 @@ class ShapeDetector:
         bl = self._line_intersect(lft, bot)
         if any(p is None for p in (tl, tr, br, bl)):
             return None
-        return np.stack([tl, tr, br, bl])
+        return np.array([tl, tr, br, bl], np.float32)
 
     def _cc_quads(self, binary):
         """CC辅助通道：连通域四边形拟合（近卡冗余，远距断线时失效）。"""
@@ -969,7 +1015,7 @@ class ShapeDetector:
             return None
         return self._classify_contour(blob)
 
-    def _classify_shape_full(self, binary):
+    def _classify_shape_full(self, binary, dbg=None):
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL,
                                        cv2.CHAIN_APPROX_SIMPLE)
         best = None
@@ -981,6 +1027,11 @@ class ShapeDetector:
                 best = c
         if best is None or best_area < 30 * 30:
             return None
+        if dbg is not None:
+            # 兜底路径也要交框指标，否则触发门槛无从判断
+            x, y, w, h = cv2.boundingRect(best)
+            dbg["quad_work"] = np.array(
+                [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], np.float32)
         return self._classify_contour(best)
 
     def _hu_match(self, contour):
@@ -1068,31 +1119,93 @@ class ShapeDetector:
     # 确认 + 冷却（与QRDetector一致）
     # ═══════════════════════════════════════════════════════════
 
+    def _approach_score(self):
+        """框中心y的下移趋势（0~1）：机器人前进时图卡从画面上方往下走。
+
+        只作软加分记录，不参与拦截——图卡一进画面就很近时无历史，不因此扣分。
+        """
+        if len(self.track) < 3:
+            return 0.0
+        seg = self.track[-8:]
+        span = seg[-1][0] - seg[0][0]
+        if span <= 0:
+            return 0.0
+        px_per_s = (seg[-1][2] - seg[0][2]) * 1000.0 / span
+        return max(0.0, min(1.0, px_per_s / 20.0))
+
     def _confirm(self, shape, dbg):
         now = int(time.time() * 1000)
+        if dbg.get("fallback"):
+            # 兜底路径的"框"是最大连通域的外接矩形，不是图卡外框，
+            # 拿它算距离/位置没有意义（空场地上的大色块也能凑出大 bbox）。
+            # 只在图像里显示，不给触发权。
+            return None, dbg
         if shape == self.candidate:
             self.candidate_count += 1
         else:
             self.candidate = shape
             self.candidate_count = 1
             self.first_candidate_ms = now
+            self.track = []
             if self.debug:
                 print(f"  [shape] NEW {shape}")
 
-        if self.candidate_count >= self.stable_frames:
-            ready = (self.last_send_ms is None
-                     or (now - self.last_send_ms) >= self.cooldown_ms)
-            if ready:
-                action = self.action_map[shape]
-                self.last_send_ms = now
-                self.candidate_count = 0
-                latency = now - (self.first_candidate_ms or now)
-                dbg["action"] = action
-                dbg["latency_ms"] = latency
-                if self.debug:
-                    print(f"  [shape] >>> SEND action={action} ({shape}) "
-                          f"latency={latency}ms")
-                return action, dbg
+        # 候选框指标（工作图坐标）。fallback 路径无框 → 直接不确认。
+        qw = dbg.get("quad_work")
+        cx = cy = box_w = None
+        if qw is not None:
+            qw = np.asarray(qw, np.float32)
+            x0, x1 = float(qw[:, 0].min()), float(qw[:, 0].max())
+            y0, y1 = float(qw[:, 1].min()), float(qw[:, 1].max())
+            cx, cy, box_w = (x0 + x1) * 0.5, (y0 + y1) * 0.5, x1 - x0
+            self.track.append((now, cx, cy, box_w))
+            if len(self.track) > 32:
+                self.track = self.track[-32:]
+
+        if self.candidate_count < self.stable_frames or cx is None:
+            return None, dbg
+        if not self.armed:
+            return None, dbg
+
+        # 双闸门：框够大 且 够靠下（都等价于"图卡够近"）
+        near_ok = (box_w >= self.cfg["trigger_box_w"]
+                   and cy >= self.cfg["trigger_y"])
+        dbg["gate_near"] = near_ok
+        if not near_ok:
+            return None, dbg
+
+        # 位置：框质心须在赛道两条边线之内。
+        # px_per_cm 由框宽反推（图卡物理宽 10cm），无需外部传像素尺度。
+        px_per_cm = box_w / 10.0
+        lane_cx = WORK_W / 2.0 + (self.lane_offset_cm or 0.0) * px_per_cm
+        half = 17.5 * px_per_cm         # 赛道半宽 17.5cm
+        off = abs(cx - lane_cx)
+        dbg["lane_offset_px"] = off
+        dbg["lane_half_px"] = half
+        if off >= half:
+            return None, dbg
+
+        # 软加分（仅记录，不拦截）
+        dbg["bonus_center"] = 1.0 - off / max(half, 1e-6)
+        dbg["bonus_approach"] = self._approach_score()
+
+        ready = (self.last_send_ms is None
+                 or (now - self.last_send_ms) >= self.cooldown_ms)
+        if ready:
+            action = self.action_map[shape]
+            self.last_send_ms = now
+            self.candidate_count = 0
+            self.armed = False
+            self.miss_count = 0
+            latency = now - (self.first_candidate_ms or now)
+            dbg["action"] = action
+            dbg["latency_ms"] = latency
+            if self.debug:
+                print(f"  [shape] >>> SEND action={action} ({shape}) "
+                      f"latency={latency}ms  w={box_w:.0f}/{self.cfg['trigger_box_w']:.0f} "
+                      f"y={cy:.0f}/{self.cfg['trigger_y']:.0f} "
+                      f"off={off:.0f}/{half:.0f}")
+            return action, dbg
         return None, dbg
 
 
