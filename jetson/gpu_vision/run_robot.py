@@ -53,7 +53,7 @@ CAM_PITCH_DEG  = float(os.environ.get("CAM_PITCH_DEG", str(_CAM["pitch_deg"])))
 CAM_VFOV_DEG   = float(os.environ.get("CAM_VFOV_DEG",  str(_CAM["vfov_deg"])))
 
 # ── 机器人步态参数 (机器人侧标定, 与测试车不同) ──
-STEP_LEN_CM    = float(os.environ.get("STEP_LEN_CM",      "10.0"))  # 一步前进距离 cm
+STEP_LEN_CM    = float(os.environ.get("STEP_LEN_CM",      "8.0"))   # 一步前进距离 cm
 PREVIEW_GAIN   = float(os.environ.get("PREVIEW_GAIN",     "1.0"))   # 一步前瞻增益
 DEADBAND_CM    = float(os.environ.get("ROUTE_DEADBAND_CM",  "1.5")) # |err|<=此值 → GO
 LEFT_THRESH_CM = float(os.environ.get("ROUTE_LEFT_THRESH_CM", "2.0")) # err<负此值 → LEFT, 否则 SLIGHT_LEFT
@@ -92,7 +92,9 @@ SERIAL_PORT = _detect_serial_port()
 SERIAL_BAUD  = int(os.environ.get("SERIAL_BAUD", "115200"))
 
 # Protocol
-CTRL_HZ      = float(os.environ.get("CTRL_HZ", "10.0"))
+# 默认逐帧发送 —— 频率 = 主循环帧率（本地 ~23Hz），不受协议 8~12Hz 约束；
+# 主控侧若吃不下，设 CTRL_HZ=12 限回协议范围。HEARTBEAT 固定 10Hz 不变。
+CTRL_HZ      = float(os.environ.get("CTRL_HZ", "0"))
 MODE_LINE_FOLLOW = 1
 MODE_LOST_SEARCH = 2
 
@@ -219,7 +221,8 @@ def main():
     sm_frame_count = 0
 
     print(f"run_robot: {actual_w}x{actual_h}  step_len={STEP_LEN_CM:.1f}cm  "
-          f"preview={PREVIEW_GAIN:.2f}  KP_s={KP_S:.3f} KP_c={KP_C:.3f}  ctrl={CTRL_HZ:.0f}Hz")
+          f"preview={PREVIEW_GAIN:.2f}  KP_s={KP_S:.3f} KP_c={KP_C:.3f}  "
+          f"ctrl={'per-frame' if CTRL_HZ <= 0 else f'{CTRL_HZ:.0f}Hz'}")
     print("Keys: 'q'=quit")
 
     if not no_serial:
@@ -255,6 +258,7 @@ def main():
         # ── Detector ──
         _dev, _hdg, conf, _vis, dbg = ld.process(bgr)
         err     = float(dbg.get("fused_err", 0.0))
+        lane_err_cm = float(dbg.get("base_err_cm", 0.0))
         angle_err = float(dbg.get("angle_err_deg", 0.0))
         curve   = bool(dbg.get("curve_mode", False))
         lost    = int(dbg.get("lost_frames", 0))
@@ -264,7 +268,7 @@ def main():
         if sm_mode == SM_DRIVE:
             sm_frame_count += 1
             if sm_frame_count % 3 == 0:
-                shape_action, _ = sd.update(bgr)
+                shape_action, _ = sd.update(bgr, lane_offset_cm=lane_err_cm)
                 if shape_action is not None:
                     sm_mode = SM_ACTION
                     sm_action = shape_action
@@ -315,7 +319,7 @@ def main():
         ang_cdeg = quantize(round(angle_err * 100.0), 100) # 航向误差 cdeg
 
         n_ms = int(t * 1000)
-        if n_ms - last_ctrl_t >= 1000.0 / CTRL_HZ:
+        if CTRL_HZ <= 0 or n_ms - last_ctrl_t >= 1000.0 / CTRL_HZ:
             _serial_send(proto.build_line_ctrl(
                 mode_u8=mode_u8, conf_u8=conf_u8, lost_u8=lost_u8,
                 route_u8=route_u8, ex_mm_i16=ex_mm, ang_cdeg_i16=ang_cdeg,
