@@ -249,6 +249,14 @@ class ShapeDetector:
             q = self._refine_quad(binary, q)
             if not self._geom_ok(q):
                 continue
+            # 尺寸/位置闸门也前置：框不够大、不够靠下、不在赛道内的候选
+            # 直接丢弃，连 _verify_quad 的采样与 warp200 都不做。
+            qa = np.asarray(q, np.float32)
+            qx0, qx1 = float(qa[:, 0].min()), float(qa[:, 0].max())
+            qy0, qy1 = float(qa[:, 1].min()), float(qa[:, 1].max())
+            if not self._box_gate_ok(qx1 - qx0, (qy0 + qy1) * 0.5,
+                                     (qx0 + qx1) * 0.5):
+                continue
             v = self._verify_quad(binary, dt, q)
             if v is not None:
                 score, closure = v
@@ -282,14 +290,20 @@ class ShapeDetector:
             dbg["quad_work"] = best  # 工作图(960×540)坐标，用于叠加在二值图上
             dbg["closure"] = best_score
         else:
-            shape = self._classify_shape_full(binary, dbg)
+            # 这一帧没有合格框，就是没有图卡 —— 不做兜底猜测。
+            # （兜底拿最大连通域的外接矩形硬判形状，既没有触发权，
+            #  产生的分类结果也只会污染统计）
             dbg["fallback"] = True
+            shape = None
 
         if shape is None:
-            self.candidate = None
-            self.candidate_count = 0
+            # 这一帧没检出图卡（框没进门槛，或抖动导致漏检）。不清零候选计数
+            # —— 中间漏一两帧不该推翻已有的连续证据。连续 4 次都检不出，
+            # 才认为卡已离开：重置计数并重新武装。
             self.miss_count += 1
             if self.miss_count >= 4:
+                self.candidate = None
+                self.candidate_count = 0
                 self.armed = True
             dbg["shape"] = None
             return None, dbg
@@ -1118,6 +1132,18 @@ class ShapeDetector:
     # ═══════════════════════════════════════════════════════════
     # 确认 + 冷却（与QRDetector一致）
     # ═══════════════════════════════════════════════════════════
+
+    def _box_gate_ok(self, box_w, cy, cx):
+        """框是否够大、够靠下、且质心在赛道两条边线内。
+
+        三道闸门的判定与 _confirm 里一致，但抽出来供候选预筛复用 ——
+        不合格的候选在 _verify_quad 之前就丢掉，省掉验证/warp/分类的开销。
+        """
+        if box_w < self.cfg["trigger_box_w"] or cy < self.cfg["trigger_y"]:
+            return False
+        px_per_cm = box_w / 10.0    # 图卡物理宽 10cm，由框宽反推像素尺度
+        lane_cx = WORK_W / 2.0 + (self.lane_offset_cm or 0.0) * px_per_cm
+        return abs(cx - lane_cx) < 17.5 * px_per_cm
 
     def _approach_score(self):
         """框中心y的下移趋势（0~1）：机器人前进时图卡从画面上方往下走。
