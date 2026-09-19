@@ -79,7 +79,8 @@ def main():
                 fallback += 1
             elif dbg.get("card_found"):
                 verified += 1
-            if dbg.get("gate_near"):
+            _bt = dbg.get("box_top")
+            if _bt is not None and _bt >= dbg.get("y_mid", 0):
                 near_pass += 1
             s = dbg.get("shape")
             if s:
@@ -110,7 +111,7 @@ def main():
     print(f"触发次数 {trig}")
     print(f"检测路径: verified {verified} 次 / fallback {fallback} 次"
           f"（fallback 不给触发权）")
-    print(f"过近距闸门 {near_pass} 次")
+    print(f"框完整落入画面下半 {near_pass} 次（位置门槛）")
     print(f"分类形状统计 {shapes}")
     print()
     if trig == 0:
