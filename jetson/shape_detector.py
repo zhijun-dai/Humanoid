@@ -114,6 +114,9 @@ class ShapeDetector:
         # 否则动作结束→恢复巡线时同一张卡还在视野内，会被反复触发停车
         self.armed = True
         self.miss_count = 0
+        # 已通过连续确认的形状（"可信 flag"）。识别阶段全图累积，与位置无关；
+        # 触发阶段才查位置。图卡离开或触发后清除。
+        self.trusted = None
         self._lsd = None            # LSD 检测器（复用，创建有开销）
 
         # ── 面积下限：按相机几何算（图卡在 max_dist_cm 处的投影像素面积）──
@@ -237,25 +240,11 @@ class ShapeDetector:
         # 不采样不warp），通过的才做完整验证（采样+DT+warp200）——
         # 实测512候选完整验证2.5s → 预筛后剩几十个
         best, best_score, scores = None, 0.0, []
-        y_split = self.cfg["trigger_y"]
         for q in quads:
-            # 图卡只可能出现在画面下半部。框未完整进入下半图（还有部分在
-            # 上半图）说明它太远或根本不是地面上的卡，直接丢弃 —— 省掉后续
-            # 几何验证/refine/warp/分类的开销，也挡掉画面上半部的纹理误检。
-            if float(np.asarray(q)[:, 1].min()) < y_split:
-                continue
             if not self._geom_ok(q):
                 continue
             q = self._refine_quad(binary, q)
             if not self._geom_ok(q):
-                continue
-            # 尺寸/位置闸门也前置：框不够大、不够靠下、不在赛道内的候选
-            # 直接丢弃，连 _verify_quad 的采样与 warp200 都不做。
-            qa = np.asarray(q, np.float32)
-            qx0, qx1 = float(qa[:, 0].min()), float(qa[:, 0].max())
-            qy0, qy1 = float(qa[:, 1].min()), float(qa[:, 1].max())
-            if not self._box_gate_ok(qx1 - qx0, (qy0 + qy1) * 0.5,
-                                     (qx0 + qx1) * 0.5):
                 continue
             v = self._verify_quad(binary, dt, q)
             if v is not None:
@@ -305,6 +294,7 @@ class ShapeDetector:
                 self.candidate = None
                 self.candidate_count = 0
                 self.armed = True
+                self.trusted = None      # 卡已离开，撤回可信标记
             dbg["shape"] = None
             return None, dbg
         self.miss_count = 0
@@ -1133,18 +1123,6 @@ class ShapeDetector:
     # 确认 + 冷却（与QRDetector一致）
     # ═══════════════════════════════════════════════════════════
 
-    def _box_gate_ok(self, box_w, cy, cx):
-        """框是否够大、够靠下、且质心在赛道两条边线内。
-
-        三道闸门的判定与 _confirm 里一致，但抽出来供候选预筛复用 ——
-        不合格的候选在 _verify_quad 之前就丢掉，省掉验证/warp/分类的开销。
-        """
-        if box_w < self.cfg["trigger_box_w"] or cy < self.cfg["trigger_y"]:
-            return False
-        px_per_cm = box_w / 10.0    # 图卡物理宽 10cm，由框宽反推像素尺度
-        lane_cx = WORK_W / 2.0 + (self.lane_offset_cm or 0.0) * px_per_cm
-        return abs(cx - lane_cx) < 17.5 * px_per_cm
-
     def _approach_score(self):
         """框中心y的下移趋势（0~1）：机器人前进时图卡从画面上方往下走。
 
@@ -1166,6 +1144,7 @@ class ShapeDetector:
             # 拿它算距离/位置没有意义（空场地上的大色块也能凑出大 bbox）。
             # 只在图像里显示，不给触发权。
             return None, dbg
+        # ── 阶段① 识别累积：全图范围，只看形状，不看位置 ──
         if shape == self.candidate:
             self.candidate_count += 1
         else:
@@ -1175,29 +1154,33 @@ class ShapeDetector:
             self.track = []
             if self.debug:
                 print(f"  [shape] NEW {shape}")
+        if self.candidate_count >= self.stable_frames:
+            self.trusted = shape        # 连续确认通过 → 打上可信 flag
 
-        # 候选框指标（工作图坐标）。fallback 路径无框 → 直接不确认。
+        # 候选框指标（工作图坐标）
         qw = dbg.get("quad_work")
-        cx = cy = box_w = None
+        cx = box_w = box_top = None
         if qw is not None:
             qw = np.asarray(qw, np.float32)
             x0, x1 = float(qw[:, 0].min()), float(qw[:, 0].max())
             y0, y1 = float(qw[:, 1].min()), float(qw[:, 1].max())
-            cx, cy, box_w = (x0 + x1) * 0.5, (y0 + y1) * 0.5, x1 - x0
+            cx, box_w, box_top = (x0 + x1) * 0.5, x1 - x0, y0
+            cy = (y0 + y1) * 0.5
             self.track.append((now, cx, cy, box_w))
             if len(self.track) > 32:
                 self.track = self.track[-32:]
 
-        if self.candidate_count < self.stable_frames or cx is None:
+        # ── 阶段② 触发判定：只看位置，形状由 flag 保证 ──
+        if self.trusted is None or self.trusted != shape:
             return None, dbg
-        if not self.armed:
+        if cx is None or not self.armed:
             return None, dbg
 
-        # 双闸门：框够大 且 够靠下（都等价于"图卡够近"）
-        near_ok = (box_w >= self.cfg["trigger_box_w"]
-                   and cy >= self.cfg["trigger_y"])
-        dbg["gate_near"] = near_ok
-        if not near_ok:
+        # 框必须完整落到画面下半（顶边过中线）—— 这才是"够近了"
+        y_mid = WORK_H * 0.5
+        dbg["box_top"] = box_top
+        dbg["y_mid"] = y_mid
+        if box_top < y_mid:
             return None, dbg
 
         # 位置：框质心须在赛道两条边线之内。
@@ -1223,13 +1206,14 @@ class ShapeDetector:
             self.candidate_count = 0
             self.armed = False
             self.miss_count = 0
+            self.trusted = None
             latency = now - (self.first_candidate_ms or now)
             dbg["action"] = action
             dbg["latency_ms"] = latency
             if self.debug:
                 print(f"  [shape] >>> SEND action={action} ({shape}) "
-                      f"latency={latency}ms  w={box_w:.0f}/{self.cfg['trigger_box_w']:.0f} "
-                      f"y={cy:.0f}/{self.cfg['trigger_y']:.0f} "
+                      f"latency={latency}ms  w={box_w:.0f} "
+                      f"top={box_top:.0f}/{y_mid:.0f} "
                       f"off={off:.0f}/{half:.0f}")
             return action, dbg
         return None, dbg
