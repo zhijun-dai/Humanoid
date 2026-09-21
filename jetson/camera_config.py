@@ -18,7 +18,7 @@ _DEFAULTS = {
     "index": 0,
     "width": 1280,
     "height": 720,
-    "vfov_deg": 56.2,
+    "vfov_deg": 55.876,
     "mount_height_cm": 40.0,
     "pitch_deg": 45.0,
 }
