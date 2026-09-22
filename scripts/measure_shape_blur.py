@@ -19,6 +19,7 @@ import numpy as np
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_ROOT, "jetson"))
 from shape_detector import ShapeDetector  # noqa: E402
+from camera_config import to_true_z  # noqa: E402
 
 LV_W = 960          # 清晰度指标统一在 960 宽上算（与曝光档位分析同一口径）
 
@@ -78,9 +79,37 @@ def main():
     print()
 
     sd = ShapeDetector(stable_frames=1, cooldown_ms=0, debug=False)
+    sigmas = [float(x) for x in args.sigmas.split(",")]
+
+    # 每张照片对应的真实距离：用 σ=0 帧检出的框反投影到地面（模型值过距离标定）
+    dists = []
+    for im in imgs:
+        a, dbg = sd.update(im)
+        z = None
+        qw = dbg.get("quad_work")
+        if qw is not None:
+            g = sd._quad_to_ground(np.asarray(qw, np.float32))
+            if g:
+                z = to_true_z(float(np.mean([p[1] for p in g])))
+        dists.append(z)
+    order = sorted(range(len(imgs)), key=lambda i: (dists[i] is None, dists[i] or 0))
+
+    print("  模糊%s   " % ("σ" if args.kind == "gauss" else "核长px")
+          + "".join("%6.1f" % s for s in sigmas) + "     清晰度lv")
+    for i in order:
+        cells = []
+        for s in sigmas:
+            b = blur(imgs[i], s, args.kind, args.angle)
+            a, dbg = sd.update(b)
+            cells.append("    ✓" if dbg.get("card_found") else "    ×")
+        lv = sharpness(blur(imgs[i], sigmas[0], args.kind, args.angle))
+        print("  %5s cm " % ("%.0f" % dists[i] if dists[i] else "?")
+              + "".join(cells) + "     %6.1f" % lv)
+
+    print()
     unit = "σ" if args.kind == "gauss" else "核长px"
     print("  模糊%s   清晰度lv   找框成功   判对形状   说明" % unit)
-    for s in [float(x) for x in args.sigmas.split(",")]:
+    for s in sigmas:
         lvs, found, correct = [], 0, 0
         for im in imgs:
             b = blur(im, s, args.kind, args.angle)
