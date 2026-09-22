@@ -8,8 +8,9 @@
       "width": 1280,
       "height": 720,
       "vfov_deg": 55.876,
-      "mount_height_cm": 30.0,
+      "mount_height_cm": 32.5,
       "pitch_deg": 45.0,
+      "_pose_verified": "2026-09-22 用实物验证：图卡平放地面、量到已知距离拍照，用 h=32.5 反解图卡边长得 9.68~10.09cm（与实物 9.x cm 吻合），俯角 45° 自洽。图卡黑框外缘实测约 9.9cm。",
       "calibration": {
         "_note": "本相机自身的棋盘格内参；此前的 56.2° 是另一颗同型号 USB 相机的值",
         "source": "generated/camera_calibration_result_usb_main_current.json",
