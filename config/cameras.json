@@ -8,7 +8,7 @@
       "width": 1280,
       "height": 720,
       "vfov_deg": 55.876,
-      "mount_height_cm": 40.0,
+      "mount_height_cm": 30.0,
       "pitch_deg": 45.0,
       "calibration": {
         "_note": "本相机自身的棋盘格内参；此前的 56.2° 是另一颗同型号 USB 相机的值",
