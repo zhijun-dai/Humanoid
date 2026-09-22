@@ -105,7 +105,7 @@ class LineDetector:
         self.cy_px = self.cam_h / 2.0
 
         # ── Threshold params ──
-        self.th_offset = -2  # stricter: only truly dark pixels
+        self.th_offset = -8  # 反光把线打成亮斑时放宽，让不够黑的也进得来
         self.th_min = 25
         self.th_max = 80
         self.dark_margin = 24
