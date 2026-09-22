@@ -127,6 +127,12 @@ class LineDetector:
         self.bottom_step = 2
         self.single_line_conf = 0.30
 
+        # ── 质心定位（阈值法配不成对时兜底）──
+        # 走路抖动把线糊浅后，硬阈值可能整行取不到 run。匀速模糊的核近似对称，
+        # 对称核不改变一阶矩，所以亮度凹陷的质心仍是无偏的线中心。
+        self.centroid_conf = 0.85
+        self.centroid_min_contrast = 5.0   # 灰度凹陷峰值下限，低于此认为没线
+
         # ── Two-band direction detection (lower 2 of 8 layers: 300-349, 350-399) ──
         self.two_band_mode = True
         # Band row ranges (400px birdseye, 50px per layer)
@@ -467,6 +473,71 @@ class LineDetector:
         valid = (widths >= self.min_line_width) & (widths <= self.max_line_width)
         return list(zip(rises[valid].tolist(), falls[valid].tolist()))
 
+    def _centroid_pair_center(self, gray_raw, y, hint_center, lane_width_hint,
+                              x0, x1):
+        """阈值法配不成对时，直接在鸟瞰灰度上找两条暗凹陷，用质心定中心。
+
+        为什么需要它：扫描输入是黑帽响应再被连通域掩膜削过的（面积<300 或高<80
+        就清零），走路模糊会把线打成小碎片，右线常在掩膜那步就没了，于是配不成对。
+        而**未经处理的鸟瞰灰度里两条线仍然清楚**。
+
+        为什么质心无偏：匀速运动模糊的核近似对称，对称核不改变一阶矩——线被抬灰、
+        边缘展宽，但凹陷的质心仍是真实中心，只是对比度下降。阈值法一过阈就归零。
+
+        不依赖 hint 定位窗口：hint 在线长期丢失时会自己退化成最小值，用它定窗口反而
+        会找错地方。这里全行搜凹陷，只把期望线宽当「挑哪一对」的偏好。
+        """
+        row = gray_raw[y, x0:x1 + 1].astype(np.float32)
+        bg = float(np.percentile(row, 60))
+        d = np.clip(bg - row, 0.0, None)
+        peak = float(d.max())
+        if peak < self.centroid_min_contrast:
+            return None
+
+        thr = max(self.centroid_min_contrast, 0.25 * peak)
+        mask = d >= thr
+        segs = []
+        i, n = 0, mask.size
+        while i < n:
+            if not mask[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and mask[j]:
+                j += 1
+            # 贴着行边的暗段多半是鸟瞰图未定义的黑边，不是线
+            if i > 0 and j < n:
+                seg = d[i:j]
+                wsum = float(seg.sum())
+                if wsum > 1e-6:
+                    xs = np.arange(i, j, dtype=np.float32)
+                    segs.append(float((seg * xs).sum() / wsum))
+            i = j
+        if len(segs) < 2:
+            return None
+
+        want = (lane_width_hint if lane_width_hint >= self.min_track_width * 2
+                else self.lane_width_init_px)
+        best = None
+        for a in range(len(segs)):
+            for b in range(a + 1, len(segs)):
+                lane_w = segs[b] - segs[a]
+                if not (self.min_track_width <= lane_w <= self.max_track_width):
+                    continue
+                center = 0.5 * (segs[a] + segs[b])
+                score = abs(lane_w - want) + 0.3 * abs(center - hint_center)
+                if best is None or score < best[0]:
+                    best = (score, lane_w, center)
+
+        if best is None:
+            return None
+        return {
+            "center_px": best[2] + x0,
+            "lane_width_px": best[1],
+            "conf": self.centroid_conf,
+            "line_mode": 3,
+        }
+
     # ═══════════════════════════════════════════════════════════
     # Pair selection
     # ═══════════════════════════════════════════════════════════
@@ -553,8 +624,13 @@ class LineDetector:
 
     def _scan_band_midline(self, gray, bgr, black_th, track_is_dark,
                            hint_x, lane_width_hint,
-                           y_start_ratio, y_end_ratio, max_rows, row_step):
-        """Scan a band of rows on the birdseye, find midline per row."""
+                           y_start_ratio, y_end_ratio, max_rows, row_step,
+                           gray_raw=None):
+        """Scan a band of rows on the birdseye, find midline per row.
+
+        gray_raw: 未做黑帽/掩膜处理的鸟瞰灰度，只给质心兜底用。gray 上的线是
+        「亮峰压在 0 背景上」且被连通域掩膜削过，质心需要的是「灰底上的暗凹陷」。
+        """
         row_step = max(1, row_step)
         img_w = self.bird_w
         img_h = self.bird_h
@@ -603,6 +679,12 @@ class LineDetector:
             chosen = self._choose_pair_center_from_runs(
                 runs, last_center, last_width, x0, x1
             )
+            # 阈值配不成对时先试质心：它实打实量出两条线的位置，
+            # 信息量高于下面的单线盲推（后者只测到一条线，另一条按线宽硬挪）。
+            if chosen is None and gray_raw is not None:
+                chosen = self._centroid_pair_center(
+                    gray_raw, y, last_center, last_width, x0, x1
+                )
             if chosen is None and len(runs) >= 1:
                 best_run = self._choose_single_run_near_hint(runs, last_center)
                 if best_run is not None:
@@ -684,12 +766,13 @@ class LineDetector:
     # ═══════════════════════════════════════════════════════════
 
     def _bottom_quarter_midline(self, gray, bgr, black_th, track_is_dark,
-                                hint_x, lane_width_hint):
+                                hint_x, lane_width_hint, gray_raw=None):
         base = self._scan_band_midline(
             gray, bgr, black_th, track_is_dark,
             hint_x, lane_width_hint,
             self.bottom_start_ratio, 1.0,
             self.bottom_rows, self.bottom_step,
+            gray_raw=gray_raw,
         )
         if base is None:
             return None
@@ -701,7 +784,7 @@ class LineDetector:
     # ═══════════════════════════════════════════════════════════
 
     def _detect_two_band_lanes(self, gray, bgr, black_th, track_is_dark,
-                                hint_x, lane_width_hint):
+                                hint_x, lane_width_hint, gray_raw=None):
         """Scan two bands on birdseye: low(350-399), mid(300-349)."""
         band_specs = [
             ("low", self.band_low_y0 / float(self.bird_h),
@@ -720,6 +803,7 @@ class LineDetector:
                 gray, bgr, black_th, track_is_dark,
                 last_center, last_width,
                 ys, ye, rows, step,
+                gray_raw=gray_raw,
             )
             if res is None:
                 continue
@@ -959,26 +1043,26 @@ class LineDetector:
         if startup_active and self.startup_force_simple_bottom:
             res = self._bottom_quarter_midline(
                 gray_detect, bgr_bird, black_th, track_is_dark,
-                scan_hint_center, scan_hint_width,
+                scan_hint_center, scan_hint_width, gray_raw=gray,
             )
             if res is not None and res["conf"] >= conf_min_dyn:
                 roi_results.append(res)
             elif self.two_band_mode:
                 roi_results = self._detect_two_band_lanes(
                     gray_detect, bgr_bird, black_th, track_is_dark,
-                    scan_hint_center, scan_hint_width,
+                    scan_hint_center, scan_hint_width, gray_raw=gray,
                 )
                 roi_results = [r for r in roi_results if r["conf"] >= conf_min_dyn]
         elif self.two_band_mode:
             roi_results = self._detect_two_band_lanes(
                 gray_detect, bgr_bird, black_th, track_is_dark,
-                scan_hint_center, scan_hint_width,
+                scan_hint_center, scan_hint_width, gray_raw=gray,
             )
             roi_results = [r for r in roi_results if r["conf"] >= conf_min_dyn]
         elif self.simple_bottom_mode:
             res = self._bottom_quarter_midline(
                 gray_detect, bgr_bird, black_th, track_is_dark,
-                scan_hint_center, scan_hint_width,
+                scan_hint_center, scan_hint_width, gray_raw=gray,
             )
             if res is not None and res["conf"] >= conf_min_dyn:
                 roi_results.append(res)
