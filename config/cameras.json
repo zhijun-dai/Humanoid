@@ -16,8 +16,14 @@
         "source": "generated/camera_calibration_result_usb_main_current.json",
         "images": "标定/最新cam/*.jpg",
         "date": "2026-09-21",
-        "image_size": [1920, 1080],
-        "board_inner_corners": [7, 4],
+        "image_size": [
+          1920,
+          1080
+        ],
+        "board_inner_corners": [
+          7,
+          4
+        ],
         "square_size_mm": 34.0,
         "images_used": 46,
         "rms_reprojection_error": 1.2981,
@@ -26,7 +32,20 @@
         "cx": 957.124,
         "cy": 604.858,
         "hfov_deg": 87.387,
-        "dist_coeffs": [-0.0047106, 0.0118400, 0.0025756, 0.0047851, -0.0263896]
+        "dist_coeffs": [
+          -0.0047106,
+          0.01184,
+          0.0025756,
+          0.0047851,
+          -0.0263896
+        ]
+      },
+      "distance_calib": {
+        "_note": "线性拟合/ 共 12 张，真值 20.0~75.0cm",
+        "a": 1.13233,
+        "b": -2.4862,
+        "rms_cm": 0.187,
+        "raw_rms_cm": 3.92
       }
     }
   }

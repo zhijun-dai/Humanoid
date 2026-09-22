@@ -69,13 +69,23 @@ def line_fit(ys, xs):
 # ═══════════════════════════════════════════════════════════════════════
 
 class LineDetector:
-    def __init__(self, cam_w=1280, cam_h=720, cam_height_cm=40.0, cam_pitch_deg=45.0, cam_vfov_deg=56.2):
+    def __init__(self, cam_w=1280, cam_h=720, cam_height_cm=40.0, cam_pitch_deg=45.0, cam_vfov_deg=56.2,
+                 z_calib=None):
         # ── Camera params ──
         self.cam_w = int(cam_w)
         self.cam_h = int(cam_h)
         self.cam_height = float(cam_height_cm)
         self.cam_pitch = np.radians(cam_pitch_deg)
         self.cam_vfov_deg = float(cam_vfov_deg)
+
+        # ── 距离线性校正（系数在 cameras.json，见 scripts/fit_camera_distance.py）──
+        if z_calib is None:
+            try:
+                from camera_config import distance_calib
+                z_calib = distance_calib()
+            except Exception:
+                z_calib = (1.0, 0.0)
+        self.z_a, self.z_b = float(z_calib[0]), float(z_calib[1])
 
         # ── Birdseye ──
         self.bird_h = 400
@@ -288,6 +298,10 @@ class LineDetector:
         W = ground_w_far * 0.7
         return W / self.bird_w
 
+    def _to_true_z(self, z_model):
+        """相机模型读数 → 地面真值 cm（系数在 cameras.json 的 distance_calib）。"""
+        return self.z_a * z_model + self.z_b
+
     def _px_to_ground_cm(self, x, y):
         """Convert birdseye pixel (x, y) to ground cm.
         x_cm: horizontal offset from center (positive = right)
@@ -295,7 +309,7 @@ class LineDetector:
         """
         x_cm = (x - self.center_x) * self.cm_per_px
         z_cm = 20.0 + (self.bird_h - 1 - y) * self.z_per_px
-        return x_cm, z_cm
+        return x_cm, self._to_true_z(z_cm)
 
     # ═══════════════════════════════════════════════════════════
     # Otsu adaptive threshold
@@ -453,7 +467,7 @@ class LineDetector:
         a = (v_foot - self.cy_px) / self.fy_px
         z_cm = self.cam_height * (np.cos(self.cam_pitch) - a * np.sin(self.cam_pitch)) \
             / (a * np.cos(self.cam_pitch) + np.sin(self.cam_pitch))
-        return cx, v_foot, z_cm
+        return cx, v_foot, self._to_true_z(z_cm)
 
     # ═══════════════════════════════════════════════════════════
     # Run collection

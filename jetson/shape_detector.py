@@ -21,7 +21,7 @@ import cv2
 import time
 import numpy as np
 
-from camera_config import load as _load_camera
+from camera_config import load as _load_camera, to_model_z
 
 _CAM = _load_camera()
 
@@ -151,7 +151,7 @@ class ShapeDetector:
         fy = WORK_H / (2.0 * math.tan(vfov / 2.0))
         hfov = 2.0 * math.atan(math.tan(vfov / 2.0) * WORK_W / WORK_H)
         fx = WORK_W / (2.0 * math.tan(hfov / 2.0))
-        z = max(1.0, z_cm)
+        z = max(1.0, to_model_z(z_cm))
         zc = h * math.sin(th) + z * math.cos(th)
         y_c = WORK_H / 2.0 + fy * (h * math.cos(th) - z * math.sin(th)) / zc
         return fx * 10.0 / zc, y_c
@@ -170,6 +170,7 @@ class ShapeDetector:
         fy = WORK_H / (2.0 * math.tan(vfov / 2.0))
         hfov = 2.0 * math.atan(math.tan(vfov / 2.0) * WORK_W / WORK_H)
         fx = WORK_W / (2.0 * math.tan(hfov / 2.0))
+        z_cm = to_model_z(z_cm)
 
         def v_of(z):
             z = max(1.0, z)
