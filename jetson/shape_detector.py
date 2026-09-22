@@ -77,15 +77,26 @@ class ShapeDetector:
                                                     "40.0")),
             "ang_min": 40,           # quad内角范围（度）；远桶GT实测38.6-143.5°
             "ang_max": 150,          # 原135/45误杀远桶透视压扁+旋转卡
-            "edge_h_tol": 25.0,      # 边方向容差：至少2条边接近水平（±此角度）
-            "edge_h_min": 2,         # 需满足的"接近水平"边数（图卡上下边；透视侧边放宽）
-            "edge_len_ratio_max": 1.6,  # 四边最长/最短比（图卡近似正方形）
+            # 地面方形判据：4 角点反投影到地面后，图卡必须是个边长 10cm 的正方形。
+            # 在透视空间量"四边等长/边接近水平"是错的 —— 卡片平躺 + 相机 45°
+            # 斜视时，真实投影边比随距离从 1.5 涨到 2.4（越远越大）。反投影消掉
+            # 视角后，真实图卡实测边比 1.20、对角比 1.15、角差 11°；
+            # 无卡视频 448 个候选里边比 p10 就有 2.84。
+            "square_side_min_cm": 6.0,       # 地面边长范围（图卡黑框外缘约 9.9cm）
+            "square_side_max_cm": 14.0,
+            "square_side_ratio_max": 1.35,   # 地面最长/最短边比
+            "square_diag_ratio_max": 1.22,   # 地面两对角线比
+            "square_angle_tol_deg": 18.0,    # 地面内角偏离 90° 的上限
             # 验证阈值（边必须几乎全在线上）
-            "closure_total": 0.95,   # 4边采样命中率均值
-            "closure_edge": 0.95,    # 单边最低命中率
+            # n_samples=16 → 每边只有 15 个采样点。原来的 0.95 要求命中 15/15，
+            # 即 4 边 60 个点一个不漏 —— 真实图卡实测最差边只有 0.67。
+            # 视角无关性交给上面 _square_on_ground 把关，闭合度只做像素级确认，
+            # 放宽到 0.65 后 11 张真卡全检出、188 帧无卡视频仍 0 假阳性。
+            "closure_total": 0.75,   # 4边采样命中率均值
+            "closure_edge": 0.65,    # 单边最低命中率
             "sample_band": 1,        # 采样带半宽px（真框边几乎全在线上）
             "n_samples": 16,         # 每边采样点数
-            "max_gap_frac": 0.25,    # 单边最长连续断口占总采样点比例上限
+            "max_gap_frac": 0.35,    # 单边最长连续断口占总采样点比例上限
             "inner_ratio": (0.02, 0.8),  # warp后中心区图形线占比（五角星5边实测0.72）
             "warp_size": 200,
             "warp_inset": 0.14,      # warp向内收缩比例（外框环不进warp）
@@ -244,9 +255,9 @@ class ShapeDetector:
         for q in quads:
             if not self._geom_ok(q):
                 continue
-            q = self._refine_quad(binary, q)
-            if not self._geom_ok(q):
-                continue
+            r = self._refine_quad(binary, q)
+            # refine 偶尔会把本来合格的框推坏（远处小卡的角点通道），此时退回原框
+            q = r if self._geom_ok(r) else q
             v = self._verify_quad(binary, dt, q)
             if v is not None:
                 score, closure = v
@@ -763,14 +774,77 @@ class ShapeDetector:
             return quad
         return refined
 
+    def _quad_to_ground(self, quad):
+        """四边形 4 角点反投影到地面平面，返回 [(X_cm, Z_cm), ...]。
+
+        针孔模型的反解（与 _triggers_at_dist 同一套）：
+            a = (v - cy)/fy
+            Z = h(cosθ - a·sinθ) / (a·cosθ + sinθ)
+            X = ((u - cx)/fx) · (h·sinθ + Z·cosθ)
+        """
+        c = self.cfg
+        h = c["cam_height_cm"]
+        th = math.radians(c["cam_pitch_deg"])
+        vfov = math.radians(c["cam_vfov_deg"])
+        fy = WORK_H / (2.0 * math.tan(vfov / 2.0))
+        hfov = 2.0 * math.atan(math.tan(vfov / 2.0) * WORK_W / WORK_H)
+        fx = WORK_W / (2.0 * math.tan(hfov / 2.0))
+        cx, cy = WORK_W / 2.0, WORK_H / 2.0
+        pts = []
+        for u, v in quad:
+            a = (float(v) - cy) / fy
+            den = a * math.cos(th) + math.sin(th)
+            if abs(den) < 1e-6:
+                return None
+            z = h * (math.cos(th) - a * math.sin(th)) / den
+            if z <= 1.0 or z > c["max_dist_cm"] * 2.0:
+                return None
+            pts.append((((float(u) - cx) / fx)
+                        * (h * math.sin(th) + z * math.cos(th)), z))
+        return pts
+
+    def _square_on_ground(self, quad):
+        """图卡在地面平面上必须是个正方形 —— 视角无关的判据。
+
+        透视空间里量"四边等长"是在拿常数硬凑视角，见 cfg 里 square_* 的说明。
+        """
+        c = self.cfg
+        g = self._quad_to_ground(quad)
+        if g is None:
+            return False
+        sides = [math.dist(g[i], g[(i + 1) % 4]) for i in range(4)]
+        if min(sides) < 1e-6:
+            return False
+        if min(sides) < c["square_side_min_cm"] or max(sides) > c["square_side_max_cm"]:
+            return False
+        if max(sides) / min(sides) > c["square_side_ratio_max"]:
+            return False
+        d1 = math.dist(g[0], g[2])
+        d2 = math.dist(g[1], g[3])
+        if max(d1, d2) / max(min(d1, d2), 1e-6) > c["square_diag_ratio_max"]:
+            return False
+        for i in range(4):
+            p0, p1, p2 = g[(i - 1) % 4], g[i], g[(i + 1) % 4]
+            v1 = (p0[0] - p1[0], p0[1] - p1[1])
+            v2 = (p2[0] - p1[0], p2[1] - p1[1])
+            n1 = math.hypot(v1[0], v1[1])
+            n2 = math.hypot(v2[0], v2[1])
+            cos = (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2 + 1e-9)
+            ang = math.degrees(math.acos(max(-1.0, min(1.0, cos))))
+            if abs(ang - 90.0) > c["square_angle_tol_deg"]:
+                return False
+        return True
+
     def _geom_ok(self, quad):
-        """轻量几何预筛（纯数值，不采样）：面积/宽高/宽高比/内角/边方向。"""
+        """轻量几何预筛（纯数值，不采样）：面积/宽高/宽高比/内角/地面方形。"""
         c = self.cfg
         q = quad.astype(np.float32)
-        area = cv2.contourArea(q)
-        if not (c["area_min"] <= area <= c["area_max"]):
-            return False
         x, y, w, h = cv2.boundingRect(q.astype(np.int32))
+        # 外接框面积，与 area_min 的推导口径一致：_card_area_at_dist 算的是
+        # "图卡在画面上占的外接矩形"。换成 contourArea 会小 ~20%（斜置四边形），
+        # 结果把最远那批卡（面积正好卡在门槛上）全判掉。
+        if not (c["area_min"] <= w * h <= c["area_max"]):
+            return False
         if w < c["min_w"] or h < c["min_h"]:
             return False
         aspect = max(w, h) / max(min(w, h), 1.0)
@@ -786,22 +860,7 @@ class ShapeDetector:
             ang = np.degrees(np.arccos(np.clip(cos, -1, 1)))
             if not (c["ang_min"] <= ang <= c["ang_max"]):
                 return False
-        # 边方向：至少 N 条边接近水平（图卡平放地面时上下边近水平；
-        # 阴影/干扰形成的歪斜四边形通常无水平边）
-        n_h = 0
-        for i in range(4):
-            p1, p2 = q[i], q[(i + 1) % 4]
-            a = abs(np.degrees(np.arctan2(p2[1] - p1[1],
-                                         p2[0] - p1[0]))) % 180.0
-            if min(a, abs(a - 180.0)) <= c["edge_h_tol"]:
-                n_h += 1
-        if n_h < c["edge_h_min"]:
-            return False
-        # 四边长度一致性：图卡近正方形，透视下最长/最短边比 ≤1.2
-        lens = [float(np.linalg.norm(q[(i + 1) % 4] - q[i])) for i in range(4)]
-        if max(lens) / max(min(lens), 1e-6) > c["edge_len_ratio_max"]:
-            return False
-        return True
+        return self._square_on_ground(q)
 
     def _verify_quad(self, binary, dt, quad):
         """返回 (score, closure) 或 None。闭合度/线宽/环内含量（几何闸门在_geom_ok）。"""
