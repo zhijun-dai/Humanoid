@@ -1300,7 +1300,10 @@ class LineDetector:
             curve_px = far_err_px - near_err_px
 
             # ── Narrow gate detection ──
-            # Entering: width ratio shows "out" (mid wider) + red bar 在 70cm 内
+            # Entering: 只看红条距离（<=70cm）。宽度比不作为判据 —— 鸟瞰的横向
+            #   比例尺随行变化（20cm 处比标称大 51%，80cm 处才对齐），一条等宽赛道
+            #   在低带会比中带凭空宽 11%，而判据要求窄 13%，畸变吃掉绝大部分余量。
+            #   且该畸变随相机高度/俯角变化，narrow_gate_exit_ratio 是按老几何调的。
             # Exiting:  red bar close OR start line close
             narrow_gate_detected = False
             narrow_gate_score = 1.0
@@ -1331,8 +1334,8 @@ class LineDetector:
             red_close = red_visible and red_bar_z_cm < self.narrow_red_close_z_cm
             line_close = line_visible and start_line_z < self.narrow_line_close_z_cm
 
-            # Entering: ratio shows out + red 在 70cm 内 (dual confirm)
-            if ratio_out and red_at_gate:
+            # Entering: 红条进入 70cm 内
+            if red_at_gate:
                 narrow_gate_detected = True
                 narrow_gate_dir = -1
 
