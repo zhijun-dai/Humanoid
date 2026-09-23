@@ -106,3 +106,7 @@ README.txt
 
 # demo 输出
 6_pictures/demo_result.jpg
+
+# 实车不跑 GPU —— 生产路径是 CPU 版 jetson/line_detector_v1_warp.py，
+# gpu_vision/ 只作实验备份
+jetson/gpu_vision/

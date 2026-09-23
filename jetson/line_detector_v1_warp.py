@@ -127,7 +127,8 @@ class LineDetector:
 
         # ── Narrow gate detection ──
         self.narrow_gate_exit_ratio = 1.15
-        self.narrow_red_close_z_cm = 35.0    # red bar z < this → exiting
+        self.narrow_red_enter_z_cm = 70.0    # 进入窄门时红条约在此距离内
+        self.narrow_red_close_z_cm = 20.0    # red bar z < this → exiting
         self.narrow_line_close_z_cm = 50.0   # start line z < this → exiting
 
         # ── Simple Bottom Mode ──
@@ -1299,7 +1300,7 @@ class LineDetector:
             curve_px = far_err_px - near_err_px
 
             # ── Narrow gate detection ──
-            # Entering: width ratio shows "out" (mid wider) + red visible + start line visible
+            # Entering: width ratio shows "out" (mid wider) + red bar 在 70cm 内
             # Exiting:  red bar close OR start line close
             narrow_gate_detected = False
             narrow_gate_score = 1.0
@@ -1326,11 +1327,12 @@ class LineDetector:
                 line_visible = start_line_z > 0
 
             red_visible = red_bar_detected and red_bar_z_cm > 0
+            red_at_gate = red_visible and red_bar_z_cm <= self.narrow_red_enter_z_cm
             red_close = red_visible and red_bar_z_cm < self.narrow_red_close_z_cm
             line_close = line_visible and start_line_z < self.narrow_line_close_z_cm
 
-            # Entering: ratio shows out + red visible + line visible (triple confirm)
-            if ratio_out and red_visible and line_visible:
+            # Entering: ratio shows out + red 在 70cm 内 (dual confirm)
+            if ratio_out and red_at_gate:
                 narrow_gate_detected = True
                 narrow_gate_dir = -1
 
