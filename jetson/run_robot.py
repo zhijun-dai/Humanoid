@@ -221,7 +221,7 @@ def main():
 
         # ── Detector ──
         _dev, _hdg, conf, _vis, dbg = ld.process(bgr)
-        err     = float(dbg.get("fused_err", 0.0))
+        err     = float(dbg.get("fused_err_cm", 0.0))
         lane_err_cm = float(dbg.get("base_err_cm", 0.0))
         angle_err = float(dbg.get("angle_err_deg", 0.0))
         curve   = bool(dbg.get("curve_mode", False))
