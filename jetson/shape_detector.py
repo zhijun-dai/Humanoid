@@ -314,6 +314,31 @@ class ShapeDetector:
         dbg["shape"] = shape
         return self._confirm(shape, dbg)
 
+    def card_position(self, dbg, lane_half_width_cm=17.5):
+        """图卡相对本车的位置分级，供上层做接近策略。
+
+        返回 (level, in_lane)：level 为 "near" / "far" / None。
+        图卡平放地面，工作图 960×540 —— 框顶越靠下说明卡离车越近。
+
+        自己从 quad_work 算，不要读 dbg["box_top"] / dbg["lane_*"]：那几个键
+        只在 _confirm 走过早期 return 之后才写入，闩锁帧和未达 stable_frames
+        的帧上根本不存在，会 KeyError。
+        """
+        qw = dbg.get("quad_work")
+        if not dbg.get("card_found") or qw is None:
+            return None, False
+        qw = np.asarray(qw, np.float32)
+        x0, x1 = float(qw[:, 0].min()), float(qw[:, 0].max())
+        box_w = x1 - x0
+        if box_w <= 1.0:
+            return None, False
+        cx = 0.5 * (x0 + x1)
+        px_per_cm = box_w / 10.0          # 图卡物理宽 10cm
+        lane_cx = WORK_W / 2.0 + (self.lane_offset_cm or 0.0) * px_per_cm
+        in_lane = abs(cx - lane_cx) < lane_half_width_cm * px_per_cm
+        level = "near" if float(qw[:, 1].min()) >= WORK_H * 0.5 else "far"
+        return level, in_lane
+
     # ═══════════════════════════════════════════════════════════
     # S1 线宽选择性二值化
     # ═══════════════════════════════════════════════════════════

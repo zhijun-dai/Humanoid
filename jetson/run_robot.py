@@ -49,6 +49,13 @@ PREVIEW_GAIN   = float(os.environ.get("PREVIEW_GAIN",     "1.0"))   # 一步前�
 DEADBAND_CM    = float(os.environ.get("ROUTE_DEADBAND_CM",  "1.5")) # |err|<=此值 → GO
 LEFT_THRESH_CM = float(os.environ.get("ROUTE_LEFT_THRESH_CM", "2.0")) # err<负此值 → LEFT, 否则 SLIGHT_LEFT
 
+# ── 图卡接近策略 ──
+# 远处（画面上半）且在赛道内见到图卡 → 速度降到 CARD_SLOW_SCALE 倍。
+# CARD_SLOW_MMPS 是满速 mm/s，经协议里的 v_cmd_mmps 下发。接收端还不认这个
+# 字段时保持 0，等于只算不发，线上字节与以前完全一致。
+CARD_SLOW_SCALE = float(os.environ.get("CARD_SLOW_SCALE", "0.5"))
+CARD_SLOW_MMPS  = float(os.environ.get("CARD_SLOW_MMPS",  "0.0"))
+
 # PID — dual-mode (straight / curve), 输出连续纠偏量 (cm)
 KP_S = float(os.environ.get("JETSON_PID_STRAIGHT_KP", "0.83"))
 KI_S = float(os.environ.get("JETSON_PID_STRAIGHT_KI", "0.004"))
@@ -222,10 +229,13 @@ def main():
         lock_ok = bool(dbg.get("bottom_lock_valid", False))
 
         # ── 图卡检测 (隔帧) ──
+        card_level = None
+        card_in_lane = False
         if sm_mode == SM_DRIVE:
             sm_frame_count += 1
             if sm_frame_count % 3 == 0:
-                shape_action, _ = sd.update(bgr, lane_offset_cm=lane_err_cm)
+                shape_action, sdbg = sd.update(bgr, lane_offset_cm=lane_err_cm)
+                card_level, card_in_lane = sd.card_position(sdbg)
                 if shape_action is not None:
                     sm_mode = SM_ACTION
                     sm_action = shape_action
@@ -275,12 +285,21 @@ def main():
         ex_mm = quantize_to_step(round(steer * 10.0), 10)          # 预测步末横向偏差 mm
         ang_cdeg = quantize_to_step(round(angle_err * 100.0), 100) # 航向误差 cdeg
 
+        # 接近策略：远处且在赛道内见到卡 → 减速；做动作时停死。
+        # 只动速度，转向仍交给上面的 PID。
+        if sm_mode == SM_ACTION:
+            speed_mmps = 0.0
+        elif card_level == "far" and card_in_lane:
+            speed_mmps = CARD_SLOW_MMPS * CARD_SLOW_SCALE
+        else:
+            speed_mmps = CARD_SLOW_MMPS
+
         n_ms = int(t * 1000)
         if CTRL_HZ <= 0 or n_ms - last_ctrl_t >= 1000.0 / CTRL_HZ:
             _serial_send(proto.build_line_ctrl(
                 mode_u8=mode_u8, conf_u8=conf_u8, lost_u8=lost_u8,
                 route_u8=route_u8, ex_mm_i16=ex_mm, ang_cdeg_i16=ang_cdeg,
-                v_cmd_mmps_i16=0, w_cmd_mradps_i16=0, ts_ms=n_ms))
+                v_cmd_mmps_i16=int(speed_mmps), w_cmd_mradps_i16=0, ts_ms=n_ms))
             last_ctrl_t = n_ms
         if n_ms - last_hb_t >= 100:
             _serial_send(proto.build_heartbeat(mode_u8, ts_ms=n_ms))
