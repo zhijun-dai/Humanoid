@@ -1,0 +1,10 @@
+path: D:\用户\Lenovo\桌面\Robocup\6_pictures\test_synthetic
+train: images
+val: images
+names:
+  0: circle
+  1: pentagon
+  2: square
+  3: diamond
+  4: cross
+  5: triangle
