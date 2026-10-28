@@ -1,0 +1,25 @@
+diff --git "a/jetson/USBcam\345\267\245\345\216\202\345\217\202\346\225\260.md" "b/jetson/USBcam\345\267\245\345\216\202\345\217\202\346\225\260.md"
+index dcb5683..f0ccace 100644
+--- "a/jetson/USBcam\345\267\245\345\216\202\345\217\202\346\225\260.md"
++++ "b/jetson/USBcam\345\267\245\345\216\202\345\217\202\346\225\260.md"
+@@ -87,7 +87,6 @@ Product Code: 25H2838135V1
+ [图片：形状和尺寸图]
+ 
+ 图中可读信息：
+-
+ - PIN 定义：1 5V，2 DM，3 DP，4 GND
+ - 尺寸标注：43.1±0.2、35.7±0.2、38.0±0.2、36.0±0.2、14.0±0.2、100°、22.5±0.2
+ 
+diff --git a/jetson/line_detector_v1_warp.py b/jetson/line_detector_v1_warp.py
+index 903e576..c2fe79c 100644
+--- a/jetson/line_detector_v1_warp.py
++++ b/jetson/line_detector_v1_warp.py
+@@ -104,7 +104,7 @@ class LineDetector:
+         self.err_scale_cm = 0.5 * self.bird_w * self.cm_per_px
+ 
+         # Pinhole intrinsics (16:9, square pixels) — exact red-bar distance
+-        vfov_rad = np.radians(self.cam_vfov_deg)
++        vfov_rad = np.radians(self.cam_vfov_deg)+
+         hfov_rad = 2.0 * np.arctan(np.tan(vfov_rad / 2.0) * self.cam_w / self.cam_h)
+         self.fx_px = self.cam_w / (2.0 * np.tan(hfov_rad / 2.0))
+         self.fy_px = self.cam_h / (2.0 * np.tan(vfov_rad / 2.0))

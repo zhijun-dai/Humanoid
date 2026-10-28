@@ -1,0 +1,62 @@
+Camera 0: 1280x720; UDP -> 127.0.0.1:5006; vx=0.4 m/s; max_wz=0.5 rad/s; yaw_sign=1; red=off; sl_gain=1.0; bias=0.0->3.0(dead 6.0, full 12.0)
+Body attitude: udp://127.0.0.1:5007 tau=1.2s; 安装角 45.0° 会被机身俯仰实时修正
+[shape] /home/isaac/shape_dump_3: cleared 10 files from the last run
+[vision] /home/isaac/loss_dump_3: cleared 18 files from the last run
+[vision]   29Hz vx=+0.400 wz=-0.000 err=-0.0cm conf=0.98 qr=-1 | steer=-0.00 eff=-0.0 ang=+2.3 curve=0/+0 far=+0 lr=11 lock=1pair=1.00 lost=0 lscale=1.002 pitch=45.0
+[vision]   21Hz vx=+0.400 wz=-0.002 err=-0.0cm conf=0.97 qr=-1 | steer=-0.03 eff=-0.0 ang=+1.8 curve=0/+0 far=+0 lr=11 lock=1pair=1.00 lost=0 lscale=1.017 pitch=45.0
+[vision]   19Hz vx=+0.400 wz=-0.002 err=-0.0cm conf=0.97 qr=-1 | steer=-0.04 eff=-0.0 ang=+1.2 curve=0/-0 far=+0 lr=11 lock=1pair=1.00 lost=0 lscale=1.029 pitch=45.0
+[vision]   18Hz vx=+0.400 wz=-0.001 err=-0.0cm conf=0.96 qr=-1 | steer=-0.02 eff=-0.0 ang=+1.3 curve=0/-0 far=+0 lr=11 lock=1pair=1.00 lost=0 lscale=1.039 pitch=45.0
+[vision]   20Hz vx=+0.400 wz=-0.001 err=-0.0cm conf=0.97 qr=-1 | steer=-0.03 eff=-0.0 ang=+1.1 curve=0/-0 far=+0 lr=11 lock=1pair=1.00 lost=0 lscale=1.049 pitch=45.0
+[vision]   20Hz vx=+0.400 wz=-0.001 err=-0.0cm conf=0.96 qr=-1 | steer=-0.02 eff=-0.0 ang=+1.1 curve=0/-0 far=+0 lr=11 lock=1pair=1.00 lost=0 lscale=1.056 pitch=45.0
+[vision]   20Hz vx=+0.400 wz=-0.001 err=-0.0cm conf=0.96 qr=-1 | steer=-0.01 eff=-0.0 ang=+1.4 curve=0/-0 far=+0 lr=11 lock=1pair=1.00 lost=0 lscale=1.061 pitch=45.0
+[vision]   20Hz vx=+0.400 wz=-0.001 err=-0.0cm conf=0.96 qr=-1 | steer=-0.02 eff=-0.0 ang=+1.3 curve=0/-0 far=+0 lr=11 lock=1pair=1.00 lost=0 lscale=1.064 pitch=45.0
+[vision]   20Hz vx=+0.400 wz=+0.001 err=+0.0cm conf=0.97 qr=-1 | steer=+0.02 eff=+0.0 ang=+1.2 curve=0/-0 far=-0 lr=11 lock=1pair=1.00 lost=0 lscale=1.067 pitch=48.0
+[vision] lock lost (pair 1.00->0.00, conf 0.96->0.45) -> /home/isaac/loss_dump_3 #1
+[vision]   22Hz vx=+0.400 wz=+0.372 err=+7.1cm conf=0.81 qr=-1 | steer=+7.44 eff=+7.1 ang=+9.6 curve=1/-4 far=-64 lr=11 lock=0pair=1.00 lost=0 lscale=1.057 pitch=49.4
+[vision]   22Hz vx=+0.400 wz=+0.049 err=+3.7cm conf=0.96 qr=-1 | steer=+0.99 eff=+3.7 ang=+3.5 curve=0/-1 far=-21 lr=11 lock=1pair=1.00 lost=0 lscale=1.049 pitch=49.2
+[vision]   20Hz vx=+0.400 wz=-0.110 err=-0.5cm conf=0.97 qr=-1 | steer=-2.21 eff=-0.5 ang=-7.3 curve=0/+3 far=+23 lr=11 lock=1pair=1.00 lost=0 lscale=1.062 pitch=48.7
+[shape] cy=0.44 cue=0.00 found=1 shape=pentagon quad=517g1v1 rej=ground:386 area_max:116 armed=1 cand=pentagonx1
+[shape] cue cy 0.60 of 0.43, no box -> stand still 3000 ms
+[shape] cy=0.60 cue=4.72 found=0 shape=- quad=0g0v0 rej=- armed=1 cand=pentagonx1
+[vision]   14Hz vx=+0.000 wz=+0.000 err=-1.6cm conf=0.87 qr=-1 | steer=-1.49 eff=-1.0 ang=-8.9 curve=1/+4 far=+29 lr=11 lock=0pair=1.00 lost=0 lscale=1.075 pitch=40.4
+[shape] cy=0.65 cue=0.00 found=1 shape=pentagon quad=514g1v1 rej=area_max:504 angle:8 armed=1 cand=pentagonx1
+[vision]   15Hz vx=+0.000 wz=+0.000 err=-7.7cm conf=0.66 qr=-1 | steer=-1.49 eff=-1.0 ang=+0.6 curve=1/+2 far=+40 lr=11 lock=0pair=1.00 lost=0 lscale=1.086 pitch=43.4
+[shape] cy=0.77 cue=0.00 found=1 shape=cross quad=467g1v1 rej=ground:346 angle:120 armed=1 cand=crossx1
+
+====================================================================
+  ★★★  识别到图卡：十字形（cross）  qr=5
+        距离画面 0.80  框宽=117px 保持 5000 ms
+====================================================================
+
+[shape] cy=0.80 cue=0.00 found=1 shape=cross quad=525g3v3 rej=area_max:512 ground:8 armed=0 cand=crossx0
+[vision]   14Hz vx=+0.000 wz=+0.000 err=-12.7cm conf=0.50 qr=5/ev5#4133659510 | steer=-1.49 eff=-1.0 ang=-13.8 curve=1/+6 far=+71 lr=11 lock=0pair=0.60 lost=0 lscale=1.091 pitch=42.8
+[vision] lock lost (pair 0.80->0.00, conf 0.50->0.40) -> /home/isaac/loss_dump_3 #2
+[shape] cy=0.81 cue=0.00 found=1 shape=cross quad=503g2v1 rej=area_max:350 ground:150 armed=0 cand=crossx2
+[vision]    8Hz vx=+0.000 wz=+0.000 err=-15.7cm conf=0.31 qr=-1/ev5#4133659510 | steer=-1.49 eff=-1.0 ang=-20.8 curve=1/+6 far=+78 lr=11 lock=0pair=0.20 lost=0 lscale=1.100 pitch=37.0
+[shape] cy=0.81 cue=0.00 found=1 shape=cross quad=525g3v3 rej=area_max:395 ground:126 armed=0 cand=crossx3
+[vision]   10Hz vx=+0.000 wz=+0.000 err=-19.7cm conf=0.48 qr=-1/ev5#4133659510 | steer=-1.49 eff=-1.0 ang=-11.2 curve=1/+4 far=+77 lr=11 lock=0pair=0.40 lost=0 lscale=1.111 pitch=37.4
+[shape] cy=0.81 cue=0.00 found=1 shape=cross quad=523g3v3 rej=area_max:512 ground:8 armed=0 cand=crossx5
+[shape] cy=0.80 cue=0.00 found=1 shape=pentagon quad=522g3v3 rej=area_max:512 ground:7 armed=0 cand=pentagonx1
+[vision]   10Hz vx=+0.000 wz=+0.000 err=-21.8cm conf=0.31 qr=-1/ev5#4133659510 | steer=-1.49 eff=-1.0 ang=-13.0 curve=1/+6 far=+77 lr=11 lock=0pair=0.50 lost=0 lscale=1.121 pitch=37.4
+[shape] cy=0.81 cue=0.00 found=1 shape=cross quad=520g3v3 rej=area_max:512 ground:5 armed=0 cand=crossx1
+[vision]    9Hz vx=+0.000 wz=+0.000 err=-23.0cm conf=0.21 qr=-1/ev5#4133659510 | steer=-1.49 eff=-1.0 ang=-7.9 curve=1/+6 far=+77 lr=11 lock=0pair=0.50 lost=0 lscale=1.130 pitch=37.5
+[shape] cy=0.81 cue=0.00 found=1 shape=cross quad=520g3v3 rej=area_max:512 ground:5 armed=0 cand=crossx3
+[shape] cy=0.81 cue=0.00 found=1 shape=cross quad=523g3v3 rej=area_max:512 ground:8 armed=0 cand=crossx5
+[vision]    9Hz vx=+0.000 wz=+0.000 err=-23.8cm conf=0.42 qr=-1/ev5#4133659510 | steer=-1.49 eff=-1.0 ang=-13.8 curve=1/+6 far=+77 lr=11 lock=0pair=0.60 lost=0 lscale=1.138 pitch=37.1
+[shape] cy=0.81 cue=0.00 found=1 shape=pentagon quad=521g3v3 rej=area_max:512 ground:6 armed=0 cand=pentagonx1
+[vision]    9Hz vx=+0.000 wz=+0.000 err=-24.0cm conf=0.26 qr=-1/ev5#4133659510 | steer=-1.49 eff=-1.0 ang=-15.3 curve=1/+5 far=+77 lr=11 lock=0pair=0.50 lost=0 lscale=1.145 pitch=37.0
+[shape] cy=0.82 cue=0.00 found=1 shape=cross quad=523g3v3 rej=area_max:512 ground:8 armed=0 cand=crossx2
+[shape] cy=0.82 cue=0.00 found=1 shape=cross quad=521g3v3 rej=area_max:512 ground:6 armed=0 cand=crossx4
+[vision]    9Hz vx=+0.000 wz=+0.000 err=-24.2cm conf=0.31 qr=-1/ev5#4133659510 | steer=-1.49 eff=-1.0 ang=-15.7 curve=1/+5 far=+77 lr=11 lock=0pair=0.30 lost=0 lscale=1.152 pitch=37.0
+[shape] cy=0.82 cue=0.00 found=1 shape=cross quad=519g3v3 rej=area_max:512 ground:4 armed=0 cand=crossx1
+[vision] card window closed; resuming frozen (hold=+0.00,+0.00 lost_s=0.00)
+[vision]    9Hz vx=+0.400 wz=-0.250 err=-24.5cm conf=0.22 qr=-1 | steer=-21.16 eff=-24.4 ang=-16.1 curve=1/+7 far=+77 lr=11 lock=0pair=0.50 lost=0 lscale=1.157 pitch=37.2
+[shape] cy=0.81 cue=0.00 found=1 shape=cross quad=521g3v2 rej=area_max:512 ground:6 armed=0 cand=crossx3
+[vision]   21Hz vx=+0.400 wz=-0.250 err=-22.9cm conf=0.33 qr=-1 | steer=-19.05 eff=-22.9 ang=+63.4 curve=1/-41 far=+21 lr=11 lock=0pair=0.00 lost=0 lscale=1.164 pitch=36.4
+[vision]   22Hz vx=+0.400 wz=-0.250 err=-23.7cm conf=0.37 qr=-1 | steer=-17.99 eff=-22.0 ang=-24.6 curve=0/+10 far=+67 lr=11 lock=0pair=0.00 lost=0 lscale=1.170 pitch=37.8
+[vision]   20Hz vx=+0.400 wz=-0.250 err=-26.3cm conf=0.33 qr=-1 | steer=-21.83 eff=-26.3 ang=-0.2 curve=0/+2 far=+134 lr=11 lock=0pair=0.00 lost=0 lscale=1.172 pitch=38.5
+[vision] lock lost (pair 0.00->0.00, conf 0.60->0.13) -> /home/isaac/loss_dump_3 #3
+[vision]   17Hz vx=+0.400 wz=-0.250 err=-31.5cm conf=0.54 qr=-1 | steer=-27.25 eff=-31.5 ang=-52.4 curve=1/-19 far=+97 lr=01 lock=0pair=0.00 lost=0 lscale=1.174 pitch=40.0
+[vision]   19Hz vx=+0.400 wz=-0.250 err=-25.9cm conf=0.20 qr=-1 | steer=-21.50 eff=-25.9 ang=+50.2 curve=1/-1 far=-13 lr=11 lock=0pair=0.00 lost=0 lscale=1.138 pitch=39.6
+[vision]   22Hz vx=+0.400 wz=-0.250 err=-18.9cm conf=0.35 qr=-1 | steer=-11.13 eff=-15.9 ang=+56.8 curve=1/-16 far=-11 lr=01 lock=0pair=0.00 lost=0 lscale=1.095 pitch=39.1
+[vision]   21Hz vx=+0.400 wz=-0.250 err=-12.4cm conf=0.41 qr=-1 | steer=-9.94 eff=-12.4 ang=+7.9 curve=0/+0 far=-23 lr=11 lock=0pair=0.50 lost=0 lscale=1.050 pitch=38.0
